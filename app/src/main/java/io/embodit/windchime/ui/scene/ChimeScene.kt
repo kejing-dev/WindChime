@@ -525,8 +525,9 @@ internal class ChimeScene(private val context: Context, private val graph: Graph
         /** System environment light (IBL) scale on the root. */
         const val ENV_LIGHT = 1.0f
         /** Emissive floor = k x the material's own base colour (dark walnut / metal brass highest, pale surfaces lowest). */
-        const val FLOOR_METAL = 0.15f
-        const val FLOOR_WOOD = 0.14f
+        /** v0.1.2 (QA #2 note: 0.15 / 0.14 washed brass saturation -18 % and flattened walnut): about half, still not black at env 0. */
+        const val FLOOR_METAL = 0.07f
+        const val FLOOR_WOOD = 0.06f
         const val FLOOR_DEFAULT = 0.10f
         const val FLOOR_LIGHT = 0.05f
     }

@@ -18,6 +18,12 @@ import kotlin.math.min
  *  2. **Bus limiter**: look-ahead [LOOKAHEAD] frames, ceiling [CEILING] (-1 dBFS), instant attack, [RELEASE_S] release,
  *     so nothing ever goes over -1 dBFS (gale + gust whoosh included).
  * Polyphony: at most 2 notes per tube (the older one fades over 80 ms) and [MAX_VOICES] in all (the oldest fades).
+ *
+ * v0.1.2 (QA #2 q2-1): a note that is already fading out (the third strike on one tube steals the oldest copy) used to
+ * be counted as "not duckable", i.e. inside the reference level the new note was judged against, and it was never
+ * turned down. At the same pitch it added to / cancelled the new attack (1.2-2.7 dB spread, limiter hits). Now every
+ * older chime note, fading or not, is on the ducked side; only effects (gust / rustle) stay in the reference.
+ * The attack window is now the 100 ms QA measures and the tolerance +-0.21 dB.
  */
 class Mixer(val sampleRate: Int = 44100) {
     /** A decoded mono sample (16-bit), with its attack window peak precomputed. */
@@ -138,11 +144,12 @@ class Mixer(val sampleRate: Int = 44100) {
         }
         if (solo <= 0f) return 1f
         val oldL = FloatArray(n); val oldR = FloatArray(n)   // duckable older notes (scaled by d)
-        val fixL = FloatArray(n); val fixR = FloatArray(n)   // effects and fading notes (not ducked)
+        val fixL = FloatArray(n); val fixR = FloatArray(n)   // effects only (never ducked, the reference)
         var any = false
         for (v in voices) {
             if (v.pos >= v.s.pcm.size) continue
-            val duckIt = v.duckable && v.fadeStep == 0f
+            // fading notes are ducked too (v0.1.2 q2-1): only effects belong in the reference level
+            val duckIt = v.duckable
             var fade = v.fade
             // the new note starts DUCK_RAMP frames from now; older notes are at their duck target by then
             val skip = max(0, DUCK_RAMP - v.delay)
@@ -167,7 +174,7 @@ class Mixer(val sampleRate: Int = 44100) {
         val lo = base * (1f - ATTACK_TOL); val hi = base * (1f + ATTACK_TOL)
         var chosen = 0f
         for (d in DUCK_STEPS) { val p = peakAt(d); if (p in lo..hi) { chosen = d; break } }
-        if (chosen < 1f) for (v in voices) if (v.duckable && v.fadeStep == 0f) v.duckTarget *= chosen
+        if (chosen < 1f) for (v in voices) if (v.duckable) v.duckTarget *= chosen
         // a fully ducked note is gone for good: fade it so it frees its voice
         if (chosen == 0f) for (v in voices) if (v.duckable && v.fadeStep == 0f) startFade(v)
         return chosen
@@ -177,8 +184,10 @@ class Mixer(val sampleRate: Int = 44100) {
         const val CEILING = 0.891f            // -1 dBFS
         const val LOOKAHEAD = 96              // ~2.2 ms
         const val RELEASE_S = 0.12
-        const val ATTACK_S = 0.12f            // attack window judged at each onset
-        const val ATTACK_TOL = 0.05f          // +-0.42 dB around the new note's own peak
+        /** Attack window judged at each onset; v0.1.2: 100 ms, the window QA measures (some samples peak again at 100-120 ms). */
+        const val ATTACK_S = 0.10f
+        /** v0.1.2: +-0.21 dB around the new note's own peak (was +-0.42), so 10 strikes stay well inside 1 dB. */
+        const val ATTACK_TOL = 0.025f
         const val DUCK_RAMP = 48              // ~1.1 ms
         /** Onset to output: the duck ramp plus the limiter look-ahead (~3.3 ms). */
         const val LATENCY = DUCK_RAMP + LOOKAHEAD

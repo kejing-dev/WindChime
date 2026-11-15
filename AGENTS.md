@@ -37,7 +37,7 @@ A press < 2 cm and < 0.35 s = tap; >= 2 cm = drag (sail = grab S03; screen / str
 export JAVA_HOME=~/.pico/primer-cli/jdk/jdk-21.0.13+9/Contents/Home
 ./gradlew assembleDebug :app:testDebugUnitTest
 ~/.factory-venv/bin/python tools/make_textures.py; ~/.factory-venv/bin/python tools/make_sounds.py --samples <dir>
-~/.factory-venv/bin/python tools/loudness.py <factory>/apps/wind-chime/qa v0.1.1   # after the unit tests (MixerRenderTest renders the bus with the real samples, needs ffmpeg)
+~/.factory-venv/bin/python tools/loudness.py <factory>/apps/wind-chime/qa v0.1.2   # after the unit tests (MixerRenderTest / MixerStressTest render the bus with the real samples, needs ffmpeg; stress report app/build/loudness/stress-v0.1.2.txt)
 ~/.factory-venv/bin/python tools/build_icon.py --icon512 <factory>/apps/wind-chime/icon.png
 ```
 Emulators are shared: `python3 -I bin/emu_borrow.py borrow wind-chime` in the factory, `return` after.
