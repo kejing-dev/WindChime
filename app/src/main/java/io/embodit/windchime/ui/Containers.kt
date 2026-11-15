@@ -14,6 +14,6 @@ object Containers {
 
 /** Window-page state shared process-wide so the debug broadcast and the flow can switch pages. */
 object Ui {
-    var page by mutableStateOf(Page.HOWTO)
+    var page by mutableStateOf(Page.PLAY)
     var exitConfirm by mutableStateOf(false)
 }

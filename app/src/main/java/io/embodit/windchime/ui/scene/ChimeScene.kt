@@ -157,16 +157,27 @@ internal class ChimeScene(private val context: Context, private val graph: Graph
     private var tileTex: TextureResource? = null
     private var walnutTex: TextureResource? = null
 
-    private class MeshSet(
-        val base: MeshResource, val column: MeshResource, val arm: MeshResource, val hook: MeshResource, val hang: MeshResource,
-        val disc: MeshResource, val tubeCord: MeshResource, val tubes: Array<List<MeshResource>>, val bands: Array<MeshResource>, val nodes: List<MeshResource>,
-        val clapperCord: MeshResource, val clapper: MeshResource, val sailCord: MeshResource, val sails: Map<ChimeKind, MeshResource>,
-        val frameV: MeshResource, val frameH: MeshResource, val paper: MeshResource, val paperBack: MeshResource,
-        val token: MeshResource, val tokenFace: MeshResource, val panel: MeshResource, val panelFace: MeshResource, val wind: List<MeshResource>,
-    )
+    private class MeshSet<M>(
+        val base: M, val column: M, val arm: M, val hook: M, val hang: M,
+        val disc: M, val tubeCord: M, val tubes: List<List<M>>, val bands: List<M>, val nodes: List<M>,
+        val clapperCord: M, val clapper: M, val sailCord: M, val sails: Map<ChimeKind, M>,
+        val frameV: M, val frameH: M, val paper: M, val paperBack: M,
+        val token: M, val tokenFace: M, val panel: M, val panelFace: M, val wind: List<M>,
+    ) {
+        fun <R> map(f: (M) -> R): MeshSet<R> = MeshSet(
+            f(base), f(column), f(arm), f(hook), f(hang), f(disc), f(tubeCord),
+            tubes.map { it.map(f) }, bands.map(f), nodes.map(f),
+            f(clapperCord), f(clapper), f(sailCord), sails.mapValues { f(it.value) },
+            f(frameV), f(frameH), f(paper), f(paperBack), f(token), f(tokenFace), f(panel), f(panelFace), wind.map(f),
+        )
+    }
 
-    private fun buildMeshes(): MeshSet {
-        fun MeshData.res(n: String) = create(n).keep()
+    /** Mesh data is cheap; creating the resources waits on the renderer, so they are all created concurrently. */
+    private suspend fun buildMeshes(): MeshSet<MeshResource> = coroutineScope {
+        val jobs = LinkedHashMap<String, kotlinx.coroutines.Deferred<MeshResource>>()
+        fun MeshData.res(n: String): String { val d = this; jobs[n] = async(Dispatchers.IO) { d.create(n).keep() }; return n }
+        val made = HashMap<String, MeshResource>()
+        fun g(n: String): MeshResource = made.getValue(n)
         val y = Geo.PIVOT_Y
         val tubeMeshes = Array(3) { k ->
             val kind = ChimeKind.entries[k]
@@ -176,7 +187,7 @@ internal class ChimeScene(private val context: Context, private val graph: Graph
                 Meshes.rod(V3(0f, -Geo.TUBE_CORD - l, 0f), V3(0f, -Geo.TUBE_CORD, 0f), kind.tubeR, 24, slantDeg = if (kind == ChimeKind.BAMBOO) 30f else 0f).res("tube_${kind.id}_$i")
             }
         }
-        val bands = Array(3) { k -> val kind = ChimeKind.entries[k]; Meshes.rod(V3(0f, -0.02f, 0f), V3(0f, 0.02f, 0f), kind.tubeR + 0.0007f, 24, caps = false).res("band_${kind.id}") }
+        val bands = Array<String>(3) { k -> val kind = ChimeKind.entries[k]; Meshes.rod(V3(0f, -0.02f, 0f), V3(0f, 0.02f, 0f), kind.tubeR + 0.0007f, 24, caps = false).res("band_${kind.id}") }
         // bamboo nodes at 1/3 of each tube
         val nodes = (0 until 5).map { i -> val l = ChimeKind.BAMBOO.length(i); Meshes.torus(ChimeKind.BAMBOO.tubeR, 0.0018f, 24, 10).also { m -> for (j in 0 until m.count) m.p[j * 3 + 1] += -Geo.TUBE_CORD - l / 3 }.res("node_$i") }
         val sails = ChimeKind.entries.associateWith { k ->
@@ -187,7 +198,7 @@ internal class ChimeScene(private val context: Context, private val graph: Graph
             }.res("sail_${k.id}")
         }
         val fw = Geo.SCREEN_FRAME
-        return MeshSet(
+        val names = MeshSet(
             base = Meshes.roundedBox(Geo.BASE_X1 - Geo.BASE_X0, Geo.BASE_Y1 - Geo.BASE_Y0, Geo.BASE_Z1 - Geo.BASE_Z0, 0.004f).res("base"),
             column = Meshes.rod(V3(0f, Geo.BASE_Y1, Geo.COLUMN_Z), V3(0f, Geo.COLUMN_TOP + Geo.ARM_R, Geo.COLUMN_Z), Geo.COLUMN_R).res("column"),
             arm = Meshes.rod(V3(0f, Geo.ARM_Y, Geo.COLUMN_Z), V3(0f, Geo.ARM_Y, 0.008f), Geo.ARM_R).res("arm"),
@@ -195,7 +206,7 @@ internal class ChimeScene(private val context: Context, private val graph: Graph
             hang = Meshes.rod(V3(0f, Geo.DISC_Y1, 0f), V3(0f, Geo.HOOK_Y, 0f), 0.0012f, 12).res("hang"),
             disc = Meshes.rod(V3(0f, Geo.DISC_Y0, 0f), V3(0f, Geo.DISC_Y1, 0f), Geo.DISC_R, 48).res("disc"),
             tubeCord = Meshes.rod(V3(0f, -Geo.TUBE_CORD, 0f), V3(0f, 0f, 0f), Geo.CORD_R, 8).res("tubeCord"),
-            tubes = tubeMeshes, bands = bands, nodes = nodes,
+            tubes = tubeMeshes.toList(), bands = bands.toList(), nodes = nodes,
             clapperCord = Meshes.rod(V3(0f, -Geo.CLAPPER_CORD + Geo.CLAPPER_T / 2, 0f), V3(0f, 0f, 0f), Geo.CORD_R, 8).res("clapperCord"),
             clapper = Meshes.rod(V3(0f, -Geo.CLAPPER_CORD - Geo.CLAPPER_T / 2, 0f), V3(0f, -Geo.CLAPPER_CORD + Geo.CLAPPER_T / 2, 0f), Geo.CLAPPER_R, 40).res("clapper"),
             sailCord = Meshes.rod(V3(0f, -ChimeKind.BRASS.sailCordL, 0f), V3(0f, 0f, 0f), Geo.CORD_R, 8).res("sailCord"),
@@ -209,7 +220,10 @@ internal class ChimeScene(private val context: Context, private val graph: Graph
             panel = Meshes.roundedBox(Geo.PANEL_W, Geo.PANEL_H, Geo.PANEL_T, 0.003f).res("panel"),
             panelFace = Meshes.quad(Geo.PANEL_W - 0.004f, Geo.PANEL_H - 0.004f, up = false).res("panelFace"),
             wind = (0 until 6).map { i -> Meshes.ribbon(0.12f + 0.016f * i, 0.0025f, 0.012f + 0.003f * (i % 3)).res("wind$i") },
-        ).also { Log.i(TAG, "MESHES built (tubes ${tubeMeshes.size * 5}, y=$y)") }
+        )
+        for ((n, d) in jobs) made[n] = d.await()
+        Log.i(TAG, "MESHES built: ${made.size} resources, ${tubeMeshes.size * 5} tubes")
+        names.map(::g)
     }
 
     private fun model(mesh: MeshResource, mat: com.pico.spatial.core.ecs.resource.Material, name: String, parent: Entity): ModelEntity =
@@ -221,10 +235,10 @@ internal class ChimeScene(private val context: Context, private val graph: Graph
         if (hover) e.components.set(HoverEffectComponent())
     }
 
-    private fun box(x: Float, y: Float, z: Float, off: V3 = V3.ZERO): ShapeResource =
+    private fun colliderBox(x: Float, y: Float, z: Float, off: V3 = V3.ZERO): ShapeResource =
         ShapeResource.createBox(Vector3(x, y, z)).keep().let { if (off == V3.ZERO) it else it.offsetByTranslation(Vector3(off.x, off.y, off.z)).keep() }
 
-    private fun assemble(m: MeshSet, mats: Mats, ph: PhysicsMaterialResource) {
+    private fun assemble(m: MeshSet<MeshResource>, mats: Mats, ph: PhysicsMaterialResource) {
         // stand
         val stand = Entity().apply { setName("stand"); root.addChild(this) }
         model(m.base, mats.walnut, "base", stand).at((Geo.BASE_X0 + Geo.BASE_X1) / 2, (Geo.BASE_Y0 + Geo.BASE_Y1) / 2, (Geo.BASE_Z0 + Geo.BASE_Z1) / 2)
@@ -241,7 +255,7 @@ internal class ChimeScene(private val context: Context, private val graph: Graph
         model(m.paperBack, mats.paperBack, "paperBack", screen)
         paperEnt = model(m.paper, mats.paper, "screen", screen).also {
             it.at(0f, 0f, 0.0025f)
-            pickable(it, box(Geo.SCREEN_W, Geo.SCREEN_H, Geo.SCREEN_T, V3(0f, 0f, -0.0025f)), ph)
+            pickable(it, colliderBox(Geo.SCREEN_W, Geo.SCREEN_H, Geo.SCREEN_T, V3(0f, 0f, -0.0025f)), ph)
         }
         // chime
         val chime = Entity().apply { setName("chime"); root.addChild(this) }
@@ -261,7 +275,7 @@ internal class ChimeScene(private val context: Context, private val graph: Graph
                 val e = model(m.tubes[k.ordinal][i], mats.tube.getValue(k), "tube:${i + 1}", node)
                 // back row (1, 3, 5) collider = radius + 3 mm; front row (2, 4) = the visible size (design input.colliders)
                 val rr = if (i == 1 || i == 3) k.tubeR else k.tubeR + 0.003f
-                pickable(e, box(2 * rr, l, 2 * rr, V3(0f, -Geo.TUBE_CORD - l / 2, 0f)), ph)
+                pickable(e, colliderBox(2 * rr, l, 2 * rr, V3(0f, -Geo.TUBE_CORD - l / 2, 0f)), ph)
                 if (k == ChimeKind.BAMBOO) model(m.nodes[i], mats.tube.getValue(k), "bambooNode:$i", e)
                 tubes[k.ordinal] += e
                 bands[k.ordinal] += model(m.bands[k.ordinal], bm, "glow:${k.id}:$i", node).apply { enabled = false }
@@ -282,7 +296,7 @@ internal class ChimeScene(private val context: Context, private val graph: Graph
                 sailMats[k] = mat
                 val e = model(m.sails.getValue(k), mat, "sail", n)
                 e.at(0f, -k.sailCordL, 0f)
-                pickable(e, box(k.sailW * 1.3f, k.sailH * 1.3f, 0.02f, V3(0f, -k.sailH / 2, 0f)), ph)
+                pickable(e, colliderBox(k.sailW * 1.3f, k.sailH * 1.3f, 0.02f, V3(0f, -k.sailH / 2, 0f)), ph)
                 sails += e
             }
         }
@@ -293,7 +307,7 @@ internal class ChimeScene(private val context: Context, private val graph: Graph
             val t = model(m.token, pbr(0xE3C9A0, 0.7f, 0f, tileTex), "token:${i + 1}", root)
             t.at(Geo.TOKEN_X[i], Geo.TOKEN_Y, Geo.TOKEN_Z)
             t.transform().setQuaternion(Quat(Vector3(1f, 0f, 0f), Geo.rad(Geo.TOKEN_TILT_DEG)))
-            pickable(t, box(Geo.TOKEN_W, Geo.TOKEN_H, Geo.TOKEN_D), ph)
+            pickable(t, colliderBox(Geo.TOKEN_W, Geo.TOKEN_H, Geo.TOKEN_D), ph)
             model(m.tokenFace, mat, "tokenFace:$i", t).at(0f, Geo.TOKEN_H / 2 + 0.0004f, 0f)
             tokens += t
         }
@@ -301,7 +315,7 @@ internal class ChimeScene(private val context: Context, private val graph: Graph
         panelMat = pbr(0xE3C9A0, 0.7f, 0f, tileTex)
         panelEnt = model(m.panel, pbr(0xE3C9A0, 0.7f, 0f, tileTex), "panel", root).also { p ->
             p.at(Geo.PANEL_C)
-            pickable(p, box(Geo.PANEL_HIT_W, Geo.PANEL_HIT_H, 0.02f), ph)
+            pickable(p, colliderBox(Geo.PANEL_HIT_W, Geo.PANEL_HIT_H, 0.02f), ph)
             model(m.panelFace, panelMat!!, "panelFace", p).at(0f, 0f, Geo.PANEL_T / 2 + 0.0004f)
         }
         // invisible strips behind the ring (v1.3): catch taps that missed a tube; one set per chime (widths differ)
@@ -310,7 +324,7 @@ internal class ChimeScene(private val context: Context, private val graph: Graph
                 val l = k.length(i).coerceAtLeast(k.length(2))
                 // gate:allow geometry invisible strip collider only (no mesh): taps behind the ring ring the tube in front
                 val s = Entity().apply { setName("strip:${i + 1}"); root.addChild(this); at((lo + hi) / 2, Geo.PIVOT_Y - Geo.TUBE_CORD - l / 2, Geo.STRIP_Z); enabled = false }
-                pickable(s, box(hi - lo, l, Geo.STRIP_T), ph, hover = false)
+                pickable(s, colliderBox(hi - lo, l, Geo.STRIP_T), ph, hover = false)
                 strips[k.ordinal] += s
             }
         }

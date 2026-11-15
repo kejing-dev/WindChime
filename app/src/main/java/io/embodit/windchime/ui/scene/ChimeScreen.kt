@@ -107,7 +107,7 @@ fun ChimeScreen() {
                 val v = content.convertPosition(Vector3(p.x, p.y, p.z), ViewCoordinateSpace.Local, content.localSpatialCoordinateSpace)
                 V3(v.x, v.y, v.z)
             }
-            withContext(NonCancellable + Dispatchers.Default) { scene.build() }
+            withContext(NonCancellable) { scene.build() } // entities on the main thread; meshes and textures are made on IO inside
             val prefs = context.getSharedPreferences("debug", android.content.Context.MODE_PRIVATE)
             if (prefs.getBoolean("s00hold", false)) { Log.i(TAG, "S00 hold 10 s"); kotlinx.coroutines.delay(10_000) }
             graph.flow.sceneReady()

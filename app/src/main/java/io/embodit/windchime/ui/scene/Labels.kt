@@ -44,8 +44,8 @@ internal object Labels {
         c.drawRoundRect(RectF(8f, 8f, w - 8f, h - 8f), 18f, 18f, Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 4f; color = 0x553A2A1C })
         if (testF) { testF(c, w, h); return b }
         val (a, s) = kind.notes[tube].tileLines(zh)
-        c.drawText(a, w / 2f, h * 0.50f, paint(if (zh) 92f else 84f))
-        c.drawText(s, w / 2f, h * 0.86f, paint(if (zh) 50f else 52f, bold = false))
+        c.drawText(a, w / 2f, h * 0.52f, paint(if (zh) 92f else 84f))
+        c.drawText(s, w / 2f, h * 0.88f, paint(if (zh) 58f else 56f))
         return b
     }
 

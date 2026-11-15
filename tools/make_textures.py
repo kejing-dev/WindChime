@@ -28,12 +28,19 @@ def save(name, rgb):
     print(name, a.reshape(-1, 3).mean(0).round(1))
 
 
+def streaky(seed, across=96, along=6):
+    """Noise stretched along y (wood fibres run lengthwise)."""
+    g = np.random.default_rng(seed).random((along, across))
+    img = Image.fromarray((g * 255).astype(np.uint8)).resize((N, N), Image.BICUBIC)
+    return np.asarray(img, dtype=np.float64) / 255
+
+
 def wood(base, dark, seed):
     y, x = np.mgrid[0:N, 0:N] / N
-    warp = noise(64, 4, seed) * 6
-    rings = np.sin((x * 18 + warp + noise(16, 2, seed + 1) * 1.5) * np.pi) * 0.5 + 0.5
-    fine = noise(4, 2, seed + 2)
-    t = (rings ** 3) * 0.7 + fine * 0.3
+    warp = noise(128, 2, seed) * 1.2 + 0.25 * np.sin(y * 6.0 + seed)
+    rings = np.sin((x * 14 + warp) * np.pi * 2) * 0.5 + 0.5
+    fibre = streaky(seed + 1, 160, 5)
+    t = (rings ** 4) * 0.45 + fibre * 0.35 + noise(32, 2, seed + 2) * 0.2
     base = np.array(base, float); dark = np.array(dark, float)
     return base * (1 - t[..., None]) + dark * t[..., None]
 
