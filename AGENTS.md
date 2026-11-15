@@ -1,14 +1,14 @@
 # 风铃 Windchime: project guidance
 
-A desk wind chime for PICO OS 6 Shared Space (Spatial SDK BOM 6.1.9), package `io.embodit.windchime`, v0.1.0.
+A desk wind chime for PICO OS 6 Shared Space (Spatial SDK BOM 6.1.9), package `io.embodit.windchime`, v0.1.1.
 Design contract: spatial-app-factory `apps/wind-chime/design-package.json` v1.3 (gate B passed 2026-11-15, defaults:
 Shared Space, still wind by default, brass A / bamboo A / glass A, icon A). Skeleton from the factory's 华容道 project
 project (volume + `Placement.right` control window, native TabBar, theme, board-input template); git history, README and
 names were reset (none of its code or text is left).
 
 ## Surfaces
-- **Chime volume** (default container `WindChimeVolume`, Volumetric 0.60 x 0.70 x 0.60 m, fixed scale, gravity aligned,
-  uniform resize). Origin = volume centre, +Z toward the user. Walnut base / column / arm, paper screen (ash frame),
+- **Chime volume** (default container `WindChimeVolume`, Volumetric 0.60 x 0.70 x 0.60 m, fixed world scale, gravity aligned,
+  uniform resize: the root follows the measured size, see `domain/VolumeScale.kt`). Origin = volume centre, +Z toward the user. Walnut base / column / arm, paper screen (ash frame),
   the chime (disc, five tubes on a 0.065 m ring with the pentagon vertex at the back, clapper, sail), five base tiles
   (宫商角徵羽 / letters, tilted 35 deg), the 「面板 / Panel」 tile at the screen's lower right, six wind lines, a warm key light.
 - **Control window** (`WindChimeControl`, Planar 560 x 640 dp, `Placement.right(volume)`), native TabBar:
@@ -24,6 +24,8 @@ names were reset (none of its code or text is left).
 | `domain/Palette.kt` | UI colours + WCAG contrast (unit-tested) |
 | `ui/scene/*` | `ChimeScene` (entities, per-frame pose copy from the ECS `ChimeFrameSystem`), `ChimeScreen` (SpatialView + board-input), `Meshes` (true round meshes), `Labels` (tile / sail text) |
 | `ui/control/*` | window pages; every Text logs `OVERFLOW <tag>` when cut; every page logs `LAYOUT <page> blank=<%>` |
+| `domain/Mixer.kt` | the mix bus (v0.1.1): new notes at their own level, older tails ducked just enough (attack peak +-0.42 dB), look-ahead limiter at -1 dBFS; `platform/Platform.kt` SoundPlayer decodes the OGGs once and feeds one AudioTrack |
+| `domain/VolumeScale.kt` | measured volume size -> root scale and hand travel / hit point -> content metres (0.5x / 1x / 3x in VolumeScaleTest) |
 | `tools/` | `make_textures.py`, `make_sounds.py` (CC0 recordings -> 30 notes), `loudness.py`, `build_icon.py` |
 
 Input: the factory board-input template (`ui/scene/input/BoardInput.kt`, DragTotal accumulates the per-frame
@@ -35,7 +37,7 @@ A press < 2 cm and < 0.35 s = tap; >= 2 cm = drag (sail = grab S03; screen / str
 export JAVA_HOME=~/.pico/primer-cli/jdk/jdk-21.0.13+9/Contents/Home
 ./gradlew assembleDebug :app:testDebugUnitTest
 ~/.factory-venv/bin/python tools/make_textures.py; ~/.factory-venv/bin/python tools/make_sounds.py --samples <dir>
-~/.factory-venv/bin/python tools/loudness.py <factory>/apps/wind-chime/qa v0.1.0   # after the unit tests
+~/.factory-venv/bin/python tools/loudness.py <factory>/apps/wind-chime/qa v0.1.1   # after the unit tests (MixerRenderTest renders the bus with the real samples, needs ffmpeg)
 ~/.factory-venv/bin/python tools/build_icon.py --icon512 <factory>/apps/wind-chime/icon.png
 ```
 Emulators are shared: `python3 -I bin/emu_borrow.py borrow wind-chime` in the factory, `return` after.
@@ -59,7 +61,8 @@ Every command calls the same `ChimeFlow` methods as the window and the 3D input.
 | S07 面板关了 | `goto S07` (system-closes the window; the panel tile glows 2 s) ; `tap panel` reopens it |
 | MUTE / LANG | `mute on|off`, `lang zh|en|system` |
 Other: `strike n`, `token n`, `tap <holder>`, `tapscreen "<x> <y>"`, `grab` / `drag "dx dy dz"` / `release`, `swipe "dx dz"`,
-`gustbutton`, `vol 0..1`, `gustsound on|off`, `page play|howto|settings`, `exitask`, `closepanel`, `reopen`, `testf on|off`
+`gustbutton`, `vol 0..1`, `gustsound on|off`, `page play|howto|settings`, `exitask`, `closepanel`, `reopen`, `testf on|off`,
+`vscale <k>|off` (pretend a k x resize), `lightfloor on|off` (emissive floor), `envlight <0..1>` (environment light scale)
 (F-up test on the tiles, panel tile and paper sail), `state` / `dump`.
 
 ## Known

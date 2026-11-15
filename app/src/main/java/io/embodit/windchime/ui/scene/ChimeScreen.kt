@@ -23,6 +23,14 @@ import io.embodit.windchime.domain.ChimeFlow
 import io.embodit.windchime.domain.Geo
 import io.embodit.windchime.domain.Hit
 import io.embodit.windchime.domain.V3
+import io.embodit.windchime.domain.VolumeScale
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
+import com.pico.spatial.ui.platform.LocalPhysicalLengthConverter
+import com.pico.spatial.ui.platform.LengthUnit
 import io.embodit.windchime.platform.Graph
 import io.embodit.windchime.platform.TAG
 import io.embodit.windchime.ui.scene.input.BoardInputConfig
@@ -94,9 +102,15 @@ fun ChimeScreen() {
         }
     }
 
+    // QA #1 q1-2: the volume's real size (uniform resize) -> content root scale + input conversion
+    var viewSize by remember { mutableStateOf(IntSize.Zero) }
+    val converter = LocalPhysicalLengthConverter.current
+    val physicalPerPx = remember(converter) { with(converter) { converter.dpToLength(1f.toDp(), LengthUnit.Meters) } }
+
     SpatialView(
         modifier = Modifier
             .fillMaxSize()
+            .onSizeChanged { viewSize = it }
             .boardInput(
                 remember { ChimeTargets() }, remember(graph) { ChimeListener(graph) },
                 BoardInputConfig(dragStartM = TapRule.DRAG_M, logTag = TAG, tapMaxMs = TapRule.TAP_MS),
@@ -112,7 +126,14 @@ fun ChimeScreen() {
             if (prefs.getBoolean("s00hold", false)) { Log.i(TAG, "S00 hold 10 s"); kotlinx.coroutines.delay(10_000) }
             graph.flow.sceneReady()
         },
-        update = { _, _ -> },
+        update = { content, _ ->
+            if (viewSize != IntSize.Zero) runCatching {
+                val p = content.convertPosition(Vector3.ZERO, ViewCoordinateSpace.Local, content.localSpatialCoordinateSpace)
+                val q = content.convertPosition(Vector3(1000f, 0f, 0f), ViewCoordinateSpace.Local, content.localSpatialCoordinateSpace)
+                val perPx = kotlin.math.hypot((q.x - p.x).toDouble(), kotlin.math.hypot((q.y - p.y).toDouble(), (q.z - p.z).toDouble())).toFloat() / 1000f
+                scene.onVolumeMeasured(VolumeScale.measured(p.x, p.y, perPx, physicalPerPx), "view=${viewSize.width}x${viewSize.height} corner=(${"%.3f".format(p.x)}, ${"%.3f".format(p.y)}, ${"%.3f".format(p.z)})")
+            }.onFailure { Log.w(TAG, "SCALE measure failed: $it") }
+        },
     )
 }
 
@@ -132,8 +153,9 @@ internal class ChimeListener(private val graph: Graph) : BoardInputListener<Stri
 
     override fun onTap(target: String?, source: InputSource, position: Offset3D?) {
         val hit = Hit.of(target)
-        val p = position?.let { pos -> runCatching { SceneHolder.convert?.invoke(pos) }.getOrNull() }
-        BoardInputLog.write(TAG, "INPUT tap src=${source.label} target=$target -> $hit at=$p")
+        val vs = VolumeScale.current
+        val p = position?.let { pos -> runCatching { SceneHolder.convert?.invoke(pos) }.getOrNull() }?.let(vs::pointToContent)
+        BoardInputLog.write(TAG, "INPUT tap src=${source.label} target=$target -> $hit at=$p scale=${"%.2f".format(vs.root)}")
         route(graph.flow, hit, p, graph.window.panelOpen, reopen = { graph.window.open("panel-tile") }, flash = { graph.window.flash() })
     }
 
@@ -144,7 +166,8 @@ internal class ChimeListener(private val graph: Graph) : BoardInputListener<Stri
         return dragging
     }
 
-    override fun onDragMove(totalM: Offset3M) { if (dragging) graph.flow.dragMove(V3(totalM.x, totalM.y, totalM.z)) }
+    /** Hand travel (physical metres) -> content metres at the volume's current scale (design input.dragSpace). */
+    override fun onDragMove(totalM: Offset3M) { if (dragging) graph.flow.dragMove(VolumeScale.current.toContent(V3(totalM.x, totalM.y, totalM.z))) }
 
     override fun onDragEnd() { if (dragging) graph.flow.dragEnd(); dragging = false }
 
@@ -162,7 +185,7 @@ internal fun route(flow: ChimeFlow, hit: Hit, at: V3?, panelOpen: Boolean, reope
         is Hit.Strip -> flow.tapScreen(hit.i)
         Hit.Sail -> flow.tapSail()
         // enhanced fallback: project the hit back toward the sitting eye onto the tube plane (<= 3 cm), else the paper puffs
-        Hit.Screen -> flow.tapScreen(at?.let { Geo.tubeNearRay(flow.sim.kind, Geo.EYES[0].second, it) })
+        Hit.Screen -> flow.tapScreen(at?.let { Geo.tubeNearRay(flow.sim.kind, VolumeScale.current.eyeToContent(Geo.EYES[0].second), it) })
         Hit.PanelTile -> flow.tapPanelTile(panelOpen, reopen, flash)
         Hit.None -> Unit
     }

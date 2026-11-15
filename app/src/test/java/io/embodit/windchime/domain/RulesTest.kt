@@ -91,11 +91,4 @@ class RulesTest {
         // far from every tube: nothing (the paper puffs)
         assertNull(Geo.tubeNearRay(ChimeKind.BRASS, eye, V3(0.19f, -0.25f, -0.278f)))
     }
-
-    @Test fun mixHeadroomKeepsThePeakSumUnderMinusOneDb() {
-        assertEquals(1f, io.embodit.windchime.platform.MixHeadroom.gain(0.5f, 0f), 1e-6f)
-        val g = io.embodit.windchime.platform.MixHeadroom.gain(0.891f, 0.6f)
-        assertTrue(0.891f * g + 0.6f <= 0.892f)
-        assertEquals(0.25f, io.embodit.windchime.platform.MixHeadroom.gain(0.891f, 0.89f), 1e-6f)
-    }
 }

@@ -1,75 +1,56 @@
-"""Render the loudness evidence (design sound.loudness, build.md 只有短促反馈音 / 响度要有证据文件):
-   ./gradlew :app:testDebugUnitTest   (LoudnessEventsTest writes app/build/loudness/events-<chime>.csv)
+"""Loudness evidence (design sound.loudness, build.md 只有短促反馈音 / 响度要有证据文件; QA #1 q1-1).
+   ./gradlew :app:testDebugUnitTest   (MixerRenderTest renders the app's own Mixer — tail duck + look-ahead limiter at
+                                        -1 dBFS — with the real CC0 samples into app/build/loudness/)
    ~/.factory-venv/bin/python tools/loudness.py <out_dir> <version>
-Mixes the app's own OGG samples at the app's gain law (SoundPlayer: volume 100 %, strike volume curve, at most 2 notes
-per tube, linear-sum headroom under -1 dBFS with the same per-chime decay constants, pan +-0.3 by tube x) into a stereo
-16-bit WAV per chime: <out_dir>/loudness-<version>-<chime>.wav, and the brass one also as loudness-<version>.wav.
-Rendered from the sound code, not recorded. Prints RMS over the sounding windows (20 ms, > peak - 30 dB) and peak."""
-import csv, os, subprocess, sys, shutil
+Copies the renders to <out_dir> (loudness-<version>-<chime>.wav = 30 s of gale, the brass one also as
+loudness-<version>.wav; melody-<chime>-<ms>ms-<version>.wav = 10 tile taps) and re-measures them independently here:
+sounding-window RMS (20 ms windows above peak - 30 dB), peak, and the attack peak (first 100 ms) of every tap.
+Rendered from the sound code, not recorded."""
+import os, sys, shutil, wave
 import numpy as np
 
 SR = 44100
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
-SND = os.path.join(ROOT, "app", "src", "main", "assets", "sounds")
-TUBE_X = [-0.062, -0.038, 0.0, 0.038, 0.062]
-TAU = {"brass": 0.8, "bamboo": 0.2, "glass": 0.5}
-CEIL = 0.891
-PEAK = 0.891
+SRC = os.path.join(os.path.dirname(HERE), "app", "build", "loudness")
+LATENCY = 48 + 96  # Mixer.DUCK_RAMP + Mixer.LOOKAHEAD frames
+BLOCK = 240
 
 
-def ogg(path):
-    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", path, "-ac", "1", "-ar", str(SR), "-f", "s16le", "-"], capture_output=True, check=True).stdout
-    return np.frombuffer(raw, dtype=np.int16).astype(np.float64) / 32768
+def read(path):
+    with wave.open(path) as w:
+        y = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float64) / 32768
+    return y.reshape(-1, 2)
 
 
 def levels(y):
-    mono = y.mean(axis=1) if y.ndim == 2 else y
+    mono = y.mean(axis=1)
     pk = np.abs(y).max()
-    w = int(0.02 * SR)
-    n = len(mono) // w
+    w = int(0.02 * SR); n = len(mono) // w
     rms = np.sqrt((mono[: n * w].reshape(n, w) ** 2).mean(axis=1))
     on = rms[rms > pk * 10 ** (-30 / 20)]
     return 20 * np.log10(np.sqrt((on ** 2).mean())), 20 * np.log10(pk)
 
 
-def render(kind, events):
-    out = np.zeros((int(SR * 31), 2))
-    nxt = {}; active = []
-    for t, tube, vol in events:
-        if vol <= 0.001: continue
-        v = nxt.get(tube, 0); nxt[tube] = (v + 1) % 2
-        x = ogg(os.path.join(SND, f"{kind}_{tube + 1}_{v + 1}.ogg"))
-        active = [a for a in active if t - a[0] < 7]
-        same = [a for a in active if a[1] == tube]
-        if len(same) >= 2: active.remove(min(same))
-        others = sum(a[2] * np.exp(-(t - a[0]) / TAU[kind]) for a in active)
-        g = min(1.0, max(0.25, (CEIL - others) / (vol * PEAK)))
-        pan = TUBE_X[tube] / 0.062 * 0.3
-        l = vol * g * min(1.0, 1 - pan); r = vol * g * min(1.0, 1 + pan)
-        i = int(t * SR); n = min(len(x), len(out) - i)
-        out[i:i + n, 0] += x[:n] * l; out[i:i + n, 1] += x[:n] * r
-        active.append((t, tube, vol * g * PEAK))
-    return out[: int(SR * 30)]
-
-
-def write(path, y):
-    import wave
-    with wave.open(path, "wb") as w:
-        w.setnchannels(2); w.setsampwidth(2); w.setframerate(SR)
-        w.writeframes((np.clip(y, -1, 1) * 32767).astype(np.int16).tobytes())
-
-
 if __name__ == "__main__":
     out_dir, ver = sys.argv[1], sys.argv[2]
     os.makedirs(out_dir, exist_ok=True)
+    lines = [f"# {ver}: re-measured by tools/loudness.py from the MixerRenderTest renders (rendered, not recorded)"]
     for kind in ("brass", "bamboo", "glass"):
-        with open(os.path.join(ROOT, "app", "build", "loudness", f"events-{kind}.csv")) as f:
-            ev = [(float(r["t"]), int(r["tube"]), float(r["vol"])) for r in csv.DictReader(f)]
-        y = render(kind, ev)
-        clipped = int((np.abs(y) > 0.999).sum())
-        p = os.path.join(out_dir, f"loudness-{ver}-{kind}.wav")
-        write(p, y)
+        y = read(os.path.join(SRC, f"gale-{kind}.wav"))
         rms, pk = levels(y)
-        print(f"{kind}: {len(ev)} strikes in 30 s, sounding-window RMS {rms:.1f} dBFS, peak {pk:.1f} dBFS, clipped samples {clipped}")
+        p = os.path.join(out_dir, f"loudness-{ver}-{kind}.wav"); shutil.copy(os.path.join(SRC, f"gale-{kind}.wav"), p)
         if kind == "brass": shutil.copy(p, os.path.join(out_dir, f"loudness-{ver}.wav"))
+        lines.append(f"{kind} gale 30 s: sounding-window RMS {rms:.1f} dBFS, peak {pk:.2f} dBFS, clipped {int((np.abs(y) > 0.999).sum())}")
+        for ms in (250, 400):
+            src = os.path.join(SRC, f"melody-{kind}-{ms}ms.wav")
+            m = read(src)
+            shutil.copy(src, os.path.join(out_dir, f"melody-{kind}-{ms}ms-{ver}.wav"))
+            pks = []
+            for i in range(10):
+                t = 0.2 + i * ms / 1000
+                f = int(np.floor(t * SR / BLOCK)) * BLOCK + LATENCY  # the 240-frame block the tap lands in, plus the bus latency
+                pks.append(float(20 * np.log10(np.abs(m[f:f + int(0.1 * SR)]).max())))
+            lines.append(f"{kind} {ms} ms 10-tap melody: attack peaks {[round(v, 2) for v in pks]} | spread {max(pks) - min(pks):.2f} dB | max {max(pks):.2f} dBFS")
+    txt = "\n".join(lines) + "\n"
+    print(txt, end="")
+    open(os.path.join(out_dir, f"melody-peaks-{ver}.txt"), "w").write(txt)

@@ -6,6 +6,7 @@ import android.os.SystemClock
 import android.util.Log
 import com.pico.spatial.core.ecs.CollisionComponent
 import com.pico.spatial.core.ecs.DirectionalLightComponent
+import com.pico.spatial.core.ecs.EnvironmentLightingSettingsComponent
 import com.pico.spatial.core.ecs.Entity
 import com.pico.spatial.core.ecs.HoverEffectComponent
 import com.pico.spatial.core.ecs.InteractableComponent
@@ -25,6 +26,7 @@ import com.pico.spatial.core.math.Quat
 import com.pico.spatial.core.math.Vector3
 import io.embodit.windchime.R
 import io.embodit.windchime.domain.ChimeKind
+import io.embodit.windchime.domain.VolumeScale
 import io.embodit.windchime.domain.Geo
 import io.embodit.windchime.domain.Rot
 import io.embodit.windchime.domain.V3
@@ -129,26 +131,49 @@ internal class ChimeScene(private val context: Context, private val graph: Graph
         val tube: Map<ChimeKind, PhysicallyBasedMaterial>, val paper: PhysicallyBasedMaterial, val paperBack: PhysicallyBasedMaterial,
     )
 
-    private fun pbr(color: Long, rough: Float, metal: Float, tex: TextureResource?): PhysicallyBasedMaterial =
+    /**
+     * Light floor (v0.1.1, QA #1 note: one warm key light only, brass / walnut may go dark on the headset, weather-scape
+     * saw dark PBR there): every lit material gets a small emissive copy of its own base colour ([floor] x base), and
+     * the root takes the system environment light (IBL) at full scale ([buildLight]). The metal brass gets the most
+     * (a metal shows only reflections, so without an environment it is black).
+     */
+    private fun pbr(color: Long, rough: Float, metal: Float, tex: TextureResource?, floor: Float = FLOOR_DEFAULT): PhysicallyBasedMaterial =
         PhysicallyBasedMaterial.create().apply {
             setBaseColor(if (tex != null) Color4(1f, 1f, 1f, 1f) else rgb(color))
             tex?.let { setBaseColorTexture(it) }
             setRoughness(rough); setMetallic(metal)
+            if (floor > 0f) { setEmissiveColor(rgb(color, floor)); synchronized(floors) { floors += Triple(this, color, floor) } }
         }.keep()
 
+    private val floors = ArrayList<Triple<PhysicallyBasedMaterial, Long, Float>>()
+
+    /** Debug `lightfloor on|off`: the same build with and without the emissive floor (before / after screenshots). */
+    fun setLightFloor(on: Boolean) {
+        synchronized(floors) { for ((m, c, k) in floors) runCatching { m.setEmissiveColor(rgb(c, if (on) k else 0f)) } }
+        lightFloor = on
+        Log.i(TAG, "LIGHT floor=$on materials=${floors.size}")
+    }
+
+    /** Debug `envlight <0..1>`: the environment light scale (0 = the darkest room the system could report). */
+    fun setEnvLight(k: Float) {
+        runCatching { root.components.set(EnvironmentLightingSettingsComponent(k)) }.onFailure { Log.w(TAG, "ENV LIGHT $it") }
+        Log.i(TAG, "LIGHT env=$k")
+    }
+    @Volatile var lightFloor = true; private set
+
     private inline fun withMaterials(t: Map<String, TextureResource?>, block: (Mats) -> Unit) {
-        val walnut = pbr(0x6A4630, 0.62f, 0f, t["walnut"])
-        val ash = pbr(0xE2D2B6, 0.6f, 0f, t["ash"])
-        val cord = pbr(0x2B2420, 0.8f, 0f, null)
+        val walnut = pbr(0x6A4630, 0.62f, 0f, t["walnut"], FLOOR_WOOD)
+        val ash = pbr(0xE2D2B6, 0.6f, 0f, t["ash"], FLOOR_LIGHT)
+        val cord = pbr(0x2B2420, 0.8f, 0f, null, FLOOR_WOOD)
         val tube = mapOf(
             // brushed brass: metallic 1.0, roughness 0.35, base #C9A15A (design chimes.list)
-            ChimeKind.BRASS to pbr(0xC9A15A, 0.35f, 1f, t["brass"]),
+            ChimeKind.BRASS to pbr(0xC9A15A, 0.35f, 1f, t["brass"], FLOOR_METAL),
             ChimeKind.BAMBOO to pbr(0xC8B26A, 0.6f, 0f, t["bamboo"]),
             // pale celadon glass, opaque, the screen's refraction baked into the base colour (gate B q5 (3))
-            ChimeKind.GLASS to pbr(0xCFE8E4, 0.08f, 0f, t["glass"]),
+            ChimeKind.GLASS to pbr(0xCFE8E4, 0.08f, 0f, t["glass"], FLOOR_LIGHT),
         )
-        val paper = pbr(0xF3EBDD, 0.9f, 0f, t["paper"])
-        val paperBack = pbr(0xEDE3D0, 0.9f, 0f, null)
+        val paper = pbr(0xF3EBDD, 0.9f, 0f, t["paper"], FLOOR_LIGHT)
+        val paperBack = pbr(0xEDE3D0, 0.9f, 0f, null, FLOOR_LIGHT)
         tileTex = t["tile"]
         walnutTex = t["walnut"]
         block(Mats(walnut, ash, cord, tube, paper, paperBack))
@@ -289,9 +314,9 @@ internal class ChimeScene(private val context: Context, private val graph: Graph
             model(m.sailCord, mats.cord, "sailCord", n)
             for (k in ChimeKind.entries) {
                 val mat = when (k) {
-                    ChimeKind.BRASS -> pbr(0x6A4630, 0.6f, 0f, walnutTex)
+                    ChimeKind.BRASS -> pbr(0x6A4630, 0.6f, 0f, walnutTex, FLOOR_WOOD)
                     ChimeKind.BAMBOO -> pbr(0xC8B26A, 0.6f, 0f, null)
-                    ChimeKind.GLASS -> pbr(0xF4EEE2, 0.9f, 0f, null)
+                    ChimeKind.GLASS -> pbr(0xF4EEE2, 0.9f, 0f, null, FLOOR_LIGHT)
                 }
                 sailMats[k] = mat
                 val e = model(m.sails.getValue(k), mat, "sail", n)
@@ -345,8 +370,30 @@ internal class ChimeScene(private val context: Context, private val graph: Graph
             light.transform().setQuaternion(q)
             root.addChild(light)
             Log.i(TAG, "PROBE light: DirectionalLightComponent($LIGHT_LUX, shadow=true) added")
+            // light floor: system environment light (IBL) on the whole chime (quoridor-walls / beat-pad do the same)
+            runCatching { root.components.set(EnvironmentLightingSettingsComponent(ENV_LIGHT)) }
+                .onSuccess { Log.i(TAG, "PROBE env light $ENV_LIGHT on root") }.onFailure { Log.w(TAG, "ENV LIGHT unavailable: $it") }
         }.onFailure { Log.w(TAG, "PROBE light unavailable: $it") }
     }
+
+    // ------------------------------------------------------------------ volume scale (QA #1 q1-2)
+
+    /** Debug only (`vscale <k>`): pretend the volume was resized to k x (the emulator has no resize handle drag). */
+    @Volatile var scaleOverride: Float? = null
+        set(v) { field = v; lastMeasured?.let { onVolumeMeasured(it.first, it.second) } }
+    private var lastMeasured: Pair<VolumeScale, String>? = null
+
+    /** The measured volume -> root scale; every input conversion reads [VolumeScale.current]. */
+    fun onVolumeMeasured(m: VolumeScale, why: String) {
+        lastMeasured = m to why
+        val s = scaleOverride?.let { m.copy(root = it.coerceIn(VolumeScale.MIN, VolumeScale.MAX)) } ?: m
+        if (s == VolumeScale.current && rootScaleSet) return
+        VolumeScale.current = s
+        rootScaleSet = true
+        root.transform().setScaleVector(Vector3(s.root, s.root, s.root))
+        Log.i(TAG, "SCALE root=${"%.3f".format(s.root)} viewRatio=${"%.3f".format(s.viewRatio)} contentPerPhysical=${"%.3f".format(s.contentPerPhysical)} override=$scaleOverride $why")
+    }
+    private var rootScaleSet = false
 
     // ------------------------------------------------------------------ per frame
 
@@ -466,6 +513,7 @@ internal class ChimeScene(private val context: Context, private val graph: Graph
 
     /** Debug dump: world boxes of every visible part (ui-audit instance list). */
     fun dump(): String = buildString {
+        append("scale=${"%.3f".format(VolumeScale.current.root)} viewRatio=${"%.3f".format(VolumeScale.current.viewRatio)} override=$scaleOverride ")
         append("kind=${sim.kind.id} sail=${"%.1f".format(sim.sailDeg())} clapperH=${"%.3f".format(sim.clapperH())} maxTube=${"%.1f".format(sim.maxTubeDeg())} fps=${"%.1f".format(fps)}")
     }
 
@@ -474,5 +522,12 @@ internal class ChimeScene(private val context: Context, private val graph: Graph
     companion object {
         /** Lux-scale key light (zen-orb 1500 was right for a desk volume; checked on the emulator, ui-audit). */
         const val LIGHT_LUX = 1500f
+        /** System environment light (IBL) scale on the root. */
+        const val ENV_LIGHT = 1.0f
+        /** Emissive floor = k x the material's own base colour (dark walnut / metal brass highest, pale surfaces lowest). */
+        const val FLOOR_METAL = 0.15f
+        const val FLOOR_WOOD = 0.14f
+        const val FLOOR_DEFAULT = 0.10f
+        const val FLOOR_LIGHT = 0.05f
     }
 }

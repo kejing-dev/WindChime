@@ -10,6 +10,7 @@ import io.embodit.windchime.domain.Language
 import io.embodit.windchime.domain.Page
 import io.embodit.windchime.domain.Settings
 import io.embodit.windchime.domain.V3
+import io.embodit.windchime.domain.VolumeScale
 import io.embodit.windchime.domain.WindLevel
 import io.embodit.windchime.ui.Ui
 import io.embodit.windchime.ui.scene.SceneHolder
@@ -26,7 +27,8 @@ import kotlin.math.sin
  *
  *   goto S00..S08 · chime brass|bamboo|glass · wind 0..3 · strike 1..5 · token 1..5 · tap <holder> (tube:3, sail, screen, panel …)
  *   tapscreen "<x> <y>" (volume metres on the paper) · grab · drag "<dx> <dy> <dz>" (metres, a real drag path) · release
- *   pull "<dx> <dy> <dz> <ms>" (grab, move there over <ms>, hold) · gust "<0.2-1> <+x|-x|+z|-z|deg>" · gustbutton · seed N
+ *   pull "<dx> <dy> <dz> <ms>" (grab, move there over <ms>, hold); drag / pull / swipe are hand travel in physical
+ *   metres, converted at the live volume scale like real input · vscale <k>|off (pretend a k x resize) · lightfloor on|off · envlight <0..1> · gust "<0.2-1> <+x|-x|+z|-z|deg>" · gustbutton · seed N
  *   hold STRIKE|SWING|GUST|S03|S04|off · mute on|off · vol 0..1 · lang zh|en|system · reduced on|off · gustsound on|off
  *   page play|howto|settings · exitask · closepanel · reopen · s00hold on|off · testf on|off · fresh · state · dump
  */
@@ -66,14 +68,14 @@ class DebugCommandReceiver : BroadcastReceiver() {
             "tap" -> tap(a)
             "tapscreen" -> route(flow, Hit.Screen, V3(f.getOrNull(0)?.toFloatOrNull() ?: 0f, f.getOrNull(1)?.toFloatOrNull() ?: 0f, -0.278f), graph.window.panelOpen)
             "grab" -> flow.dragStart(Hit.Sail, V3.ZERO)
-            "drag" -> flow.dragMove(V3(f.getOrNull(0)?.toFloatOrNull() ?: 0f, f.getOrNull(1)?.toFloatOrNull() ?: 0f, f.getOrNull(2)?.toFloatOrNull() ?: 0f))
+            "drag" -> flow.dragMove(VolumeScale.current.toContent(V3(f.getOrNull(0)?.toFloatOrNull() ?: 0f, f.getOrNull(1)?.toFloatOrNull() ?: 0f, f.getOrNull(2)?.toFloatOrNull() ?: 0f)))
             "release" -> { flow.hold(null); flow.dragEnd() }
             "pull" -> pull(graph, f.getOrNull(0)?.toFloatOrNull() ?: 0.12f, f.getOrNull(1)?.toFloatOrNull() ?: 0f, f.getOrNull(2)?.toFloatOrNull() ?: 0f, f.getOrNull(3)?.toLongOrNull() ?: 600) {}
             "swipe" -> {
                 // a real gust drag on the screen: start, move (dx, dz) over 0.25 s, end
                 val dx = f.getOrNull(0)?.toFloatOrNull() ?: 0.2f; val dz = f.getOrNull(1)?.toFloatOrNull() ?: 0f
                 flow.dragStart(Hit.Screen, V3.ZERO)
-                graph.scope.launch { for (i in 1..8) { flow.dragMove(V3(dx * i / 8, 0f, dz * i / 8)); delay(30) }; flow.dragEnd() }
+                graph.scope.launch { for (i in 1..8) { flow.dragMove(VolumeScale.current.toContent(V3(dx * i / 8, 0f, dz * i / 8))); delay(30) }; flow.dragEnd() }
             }
             "gust" -> { val (dx, dz) = dirOf(f.getOrNull(1)); flow.gust(dx, dz, f.getOrNull(0)?.toFloatOrNull() ?: 1f, user = true) }
             "gustbutton" -> flow.gustButton()
@@ -90,6 +92,9 @@ class DebugCommandReceiver : BroadcastReceiver() {
             "reopen" -> graph.window.open("debug")
             "s00hold" -> context.getSharedPreferences("debug", Context.MODE_PRIVATE).edit().putBoolean("s00hold", on).commit()
             "testf" -> SceneHolder.scene?.testF = on
+            "lightfloor" -> SceneHolder.scene?.setLightFloor(on)
+            "envlight" -> SceneHolder.scene?.setEnvLight((a.toFloatOrNull() ?: 1f).coerceIn(0f, 1f))
+            "vscale" -> SceneHolder.scene?.scaleOverride = a.toFloatOrNull() // "off" -> measured size again
             "fresh" -> graph.settings.clear()
             "state", "dump" -> Log.i(TAG, "STATE ${flow.stateId(Ui.page, Ui.exitConfirm, graph.window.panelOpen)} ${SceneHolder.scene?.dump().orEmpty()} panel=${graph.window.panelState} settings=${graph.settings.value}")
             else -> Log.w(TAG, "CMD unknown: $cmd")
@@ -102,7 +107,7 @@ class DebugCommandReceiver : BroadcastReceiver() {
         flow.dragStart(Hit.Sail, V3.ZERO)
         graph.scope.launch {
             val n = (ms / 30).coerceAtLeast(1)
-            for (i in 1..n) { flow.dragMove(V3(dx * i / n, dy * i / n, dz * i / n)); delay(30) }
+            for (i in 1..n) { flow.dragMove(VolumeScale.current.toContent(V3(dx * i / n, dy * i / n, dz * i / n))); delay(30) }
             delay(400)
             then()
         }
