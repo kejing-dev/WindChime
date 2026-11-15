@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">风铃</string>
+    <string name="lang_code">zh</string>
+
+    <string name="tab_play">玩</string>
+    <string name="tab_howto">怎么玩</string>
+    <string name="tab_settings">设置</string>
+
+    <string name="loading">风铃挂上来了…</string>
+    <string name="play_line">点一根管，或者捏住下面的风帆，拉开，松手。</string>
+    <string name="play_small">在屏风上划一下，就起风了。</string>
+    <string name="hold_line">拉开一点，松手。</string>
+    <string name="hold_locked">先松手</string>
+    <string name="label_chime">风铃</string>
+    <string name="label_wind">风</string>
+    <string-array name="chimes">
+        <item>铜</item>
+        <item>竹</item>
+        <item>玻璃</item>
+    </string-array>
+    <string-array name="winds">
+        <item>无风</item>
+        <item>微风</item>
+        <item>和风</item>
+        <item>大风</item>
+    </string-array>
+    <string-array name="swap_line">
+        <item>铜的，亮，尾音长，像寺檐下那串。</item>
+        <item>竹子的，闷一点，像下小雨。</item>
+        <item>玻璃的，高，清，像冰块碰杯。</item>
+    </string-array>
+    <string-array name="mode_small">
+        <item>C 宫调</item>
+        <item>C 徵调，从 G 起</item>
+        <item>C 角调，从 E 起</item>
+    </string-array>
+    <string name="btn_gust">来一阵风</string>
+    <string name="btn_mute">静音</string>
+    <string name="btn_unmute">取消静音</string>
+
+    <string name="how_to_title">怎么玩</string>
+    <string name="how_to_tap">点一根管，或者点底座上的牌子。</string>
+    <string name="how_to_tap_ways">手：看着它捏一下 · 手柄：指着它扣扳机</string>
+    <string name="how_to_sail">捏住下面的风帆，拉开，松手。</string>
+    <string name="how_to_sail_ways">手：捏住了挪 · 手柄：按住扳机挪</string>
+    <string name="how_to_wind">在屏风上划一下，起风。</string>
+    <string name="how_to_wind_ways">在屏风上捏住一扫 · 或者点「来一阵风」</string>
+    <string name="how_to_small">五根管是宫商角徵羽。五声音阶里没有半音，所以怎么碰都不难听。</string>
+    <string name="how_to_next">先试试：随便点一根管。</string>
+    <string name="btn_start">开始</string>
+    <string name="btn_ok">好的</string>
+
+    <string name="settings_language">语言</string>
+    <string name="lang_system">跟随系统</string>
+    <string name="lang_zh">中文</string>
+    <string name="lang_en">English</string>
+    <string name="settings_volume">音量</string>
+    <string name="settings_mute">静音</string>
+    <string name="settings_gust">风声</string>
+    <string name="settings_reduced">减少动态</string>
+    <string name="opt_on">开</string>
+    <string name="opt_off">关</string>
+    <string name="panel_hint">面板关了？点屏风右下角的小木牌。</string>
+    <string name="settings_about_label">关于</string>
+    <string name="settings_about_text">v%1$s · 声音：freesound.org 与 Kenney 的 CC0 录音</string>
+    <string name="settings_exit">退出应用</string>
+    <string name="exit_line">要走了？风铃先收起来。</string>
+    <string name="btn_cancel">取消</string>
+    <string name="btn_exit">退出</string>
+
+    <string name="sail_word">风</string>
+    <string name="panel_tile">面板</string>
+</resources>
