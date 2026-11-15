@@ -1,10 +1,9 @@
 # 风铃 Windchime: project guidance
 
-A desk wind chime for PICO OS 6 Shared Space (Spatial SDK BOM 6.1.9), package `io.embodit.windchime`, v0.1.1.
+A desk wind chime for PICO OS 6 Shared Space (Spatial SDK BOM 6.1.9), package `io.embodit.windchime`, v0.1.2.
 Design contract: spatial-app-factory `apps/wind-chime/design-package.json` v1.3 (gate B passed 2026-11-15, defaults:
-Shared Space, still wind by default, brass A / bamboo A / glass A, icon A). Skeleton from the factory's 华容道 project
-project (volume + `Placement.right` control window, native TabBar, theme, board-input template); git history, README and
-names were reset (none of its code or text is left).
+Shared Space, still wind by default, brass A / bamboo A / glass A, icon A). Skeleton: the factory's shared volume
+template (volume + `Placement.right` control window, native TabBar, theme, board-input template).
 
 ## Surfaces
 - **Chime volume** (default container `WindChimeVolume`, Volumetric 0.60 x 0.70 x 0.60 m, fixed world scale, gravity aligned,
