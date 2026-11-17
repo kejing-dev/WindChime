@@ -14,6 +14,7 @@
 - **声音**：真实的 CC0 录音（freesound.org、Kenney），按每根管的音高变调；混音总线让快速连敲同一根管时音量一致
 - **体积可缩放**：风铃放在系统的立体窗口（Shared Space 体积）里，可拖动、等比缩放，内容和手势都跟着缩放
 - **光照**：暖色方向光 + 环境光和材质亮度兜底
+- **大风不卡**：物理在独立的 360 Hz 线程上按真实时钟走，系统把体积降到 10 fps 时风铃也不慢动作；碰撞声按发生时刻排进混音，不挤成一团（v0.1.3）
 - 手势捏合 / 眼动 + 捏合 / 手柄射线；中英双语；全部本机运行，不联网、不需要账号
 
 | | |
@@ -23,11 +24,11 @@
 | ![一阵风](docs/screenshots/05-gust-zh.jpg) 在屏风上划一阵风 | ![怎么玩](docs/screenshots/06-howto-zh.jpg) 怎么玩 |
 | ![设置](docs/screenshots/07-settings-zh.jpg) 设置 | |
 
-> 截图和演示视频都在 PICO 模拟器里拍，用调试广播驱动（模拟器发不出 3D 捏合 / 拖动），**非真实手势录像**；演示视频没有声音。
+> 截图（v0.1.3 新拍）和演示视频（v0.1.2 录，画面与 v0.1.3 相同）都在 PICO 模拟器里拍，用调试广播驱动（模拟器发不出 3D 捏合 / 拖动），**非真实手势录像**；演示视频没有声音。
 
 ### 安装
 
-从 [Releases](https://github.com/kejing-dev/WindChime/releases) 下载 `Windchime-v0.1.2.apk`（assembleRelease 未签名包，供商店重签名）。自己装到头显请用 debug 构建：
+从 [Releases](https://github.com/kejing-dev/WindChime/releases) 下载 `Windchime-v0.1.3.apk`（assembleRelease 未签名包，供商店重签名）。自己装到头显请用 debug 构建：
 
 ```bash
 ./gradlew assembleDebug
@@ -37,11 +38,12 @@ pico-cli app launch io.embodit.windchime
 
 需要 PICO OS 6（Android 15，minSdk 35），Spatial SDK 6.1.9。
 
-### 已知问题（v0.1.2）
+### 已知问题（v0.1.3）
 
+- 整机卡顿超过 0.25 s 时（比如系统抓取截图那几秒），物理按设计丢掉超出的积压：风铃停一下再接着走，不会慢动作
 - 最暗的环境光下，木锤和屏风右下的小木牌接近黑色
-- 启动时音频欠载 3 次后稳定（缓冲约 38 ms）
-- 以下只在模拟器上验过，待真机确认：快速连敲的听感、黄铜 / 胡桃木在真实房间里的颜色、缩放后拉帆 / 划风是否跟手、手 / 手柄 / 眼手三种输入、点击到出声延迟
+- 启动时音频欠载几次后稳定（缓冲约 40 ms）
+- 以下只在模拟器上验过，待真机确认：真机系统降帧时大风下的听感和动作、快速连敲的听感、黄铜 / 胡桃木在真实房间里的颜色、缩放后拉帆 / 划风是否跟手、手 / 手柄 / 眼手三种输入、点击到出声延迟
 
 ## English
 
@@ -53,6 +55,7 @@ A small walnut stand with a paper screen behind it and a five-tube wind chime, f
 - **Sound**: real CC0 recordings (freesound.org, Kenney) pitched to each tube; a mix bus keeps fast repeated strikes at the same level
 - **Resizable**: the chime lives in a system volume you can move and scale uniformly; content and gestures follow the size
 - **Light**: a warm key light plus an ambient / material floor
+- **Smooth in a gale**: physics runs on its own 360 Hz thread by the wall clock, so when the system drops the volume to 10 fps the chime keeps real speed; strike sounds are placed at the moment they happen instead of bunching up (v0.1.3)
 - Hand pinch, gaze + pinch, controller ray; Chinese and English; fully offline, no account
 
 | | |
@@ -62,11 +65,11 @@ A small walnut stand with a paper screen behind it and a five-tube wind chime, f
 | ![Gust](docs/screenshots/05-gust-en.jpg) Swipe a gust | ![How to play](docs/screenshots/06-howto-en.jpg) How to play |
 | ![Settings](docs/screenshots/07-settings-en.jpg) Settings | |
 
-> Screenshots and the demo video were captured on the PICO emulator, driven by a debug broadcast (the emulator can't send 3D pinches or drags): **not a real hand-gesture recording**. The demo video has no sound.
+> Screenshots (v0.1.3) and the demo video (recorded on v0.1.2, same visuals) were captured on the PICO emulator, driven by a debug broadcast (the emulator can't send 3D pinches or drags): **not a real hand-gesture recording**. The demo video has no sound.
 
 ### Install
 
-Download `Windchime-v0.1.2.apk` from [Releases](https://github.com/kejing-dev/WindChime/releases) (assembleRelease, unsigned, for store re-signing). To sideload on a headset, use a debug build:
+Download `Windchime-v0.1.3.apk` from [Releases](https://github.com/kejing-dev/WindChime/releases) (assembleRelease, unsigned, for store re-signing). To sideload on a headset, use a debug build:
 
 ```bash
 ./gradlew assembleDebug
@@ -76,17 +79,18 @@ pico-cli app launch io.embodit.windchime
 
 Requires PICO OS 6 (Android 15, minSdk 35), Spatial SDK 6.1.9.
 
-### Known issues (v0.1.2)
+### Known issues (v0.1.3)
 
+- If the whole device stalls for more than 0.25 s (e.g. while the system grabs a screenshot), physics drops the backlog by design: the chime pauses briefly and carries on, never in slow motion
 - In the darkest ambient light the clapper and the small wooden tile at the screen's lower right look almost black
-- Audio underruns 3 times at start, then holds (about 38 ms buffer)
-- Verified on the emulator only, headset check pending: feel of fast repeated strikes, brass / walnut colour in a real room, sail / gust after resizing, hand / controller / gaze input, tap-to-sound latency
+- Audio underruns a few times at start, then holds (about 40 ms buffer)
+- Verified on the emulator only, headset check pending: gale feel when the headset really drops the frame rate, feel of fast repeated strikes, brass / walnut colour in a real room, sail / gust after resizing, hand / controller / gaze input, tap-to-sound latency
 
 ## Build / 构建
 
 ```bash
 export JAVA_HOME=<JDK 21>
-./gradlew assembleDebug :app:testDebugUnitTest   # 51 unit tests
+./gradlew assembleDebug :app:testDebugUnitTest   # 58 unit tests
 ./gradlew assembleRelease                         # unsigned release APK
 ```
 
