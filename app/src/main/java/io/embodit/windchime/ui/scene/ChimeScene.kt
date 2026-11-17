@@ -63,7 +63,8 @@ internal fun hangQuat(d: V3): Quat { val (ax, a) = Rot.fromDown(d); return Quat(
  *      ─ sailNode (moved to the sail's hanging point each frame) → cord + "sail" per kind
  *      ─ "token:i" tiles + label, "panel" tile + label, "strip:<kind>:i" invisible strips, windLines, keyLight
  * ```
- * Compose never drives motion: [onFrame] runs from the ECS system, ticks the flow and copies the pose here.
+ * Compose never drives motion: [onFrame] runs from the ECS system and copies the latest pose here. v0.1.3 (D55): it no
+ * longer ticks the flow; the physics runs on [io.embodit.windchime.domain.SimLoop] and this only reads [ChimeFlow.snapshot].
  */
 internal class ChimeScene(private val context: Context, private val graph: Graph, private val scope: CoroutineScope) {
     private val flow = graph.flow
@@ -102,6 +103,10 @@ internal class ChimeScene(private val context: Context, private val graph: Graph
     private var frames = 0
     private var fpsT0 = SystemClock.elapsedRealtime()
     @Volatile var fps = 0f; private set
+    private val pose = io.embodit.windchime.domain.ChimePose()
+    private var frameSimT0 = 0.0
+    /** Debug `throttle <ms>`: sleep this long in each frame, to run the volume at a low frame rate on the emulator. */
+    @Volatile var throttleMs = 0L
 
     // ------------------------------------------------------------------ build
 
@@ -397,27 +402,35 @@ internal class ChimeScene(private val context: Context, private val graph: Graph
 
     // ------------------------------------------------------------------ per frame
 
+    @Suppress("UNUSED_PARAMETER")
     fun onFrame(dt: Float) {
+        if (throttleMs > 0) Thread.sleep(throttleMs)
+        val p = flow.snapshot(pose)
         frames++
         val nowMs = SystemClock.elapsedRealtime()
-        if (nowMs - fpsT0 >= 5000) { fps = frames * 1000f / (nowMs - fpsT0); frames = 0; fpsT0 = nowMs; Log.i(TAG, "FRAME fps=${"%.1f".format(fps)} strikes=${flow.strikesTotal} sail=${"%.1f".format(sim.sailDeg())}") }
-        flow.tick(dt.coerceIn(0f, 0.1f))
+        if (nowMs - fpsT0 >= 5000) {
+            val wall = (nowMs - fpsT0) / 1000.0
+            fps = (frames / wall).toFloat()
+            val rate = (p.simTime - frameSimT0) / wall
+            frames = 0; fpsT0 = nowMs; frameSimT0 = p.simTime
+            Log.i(TAG, "FRAME fps=${"%.1f".format(fps)} simRate=${"%.3f".format(rate)} strikes=${p.strikesTotal} sail=${"%.1f".format(p.sailDeg)} throttle=${throttleMs}ms")
+        }
         if (!built) return
         val s = graph.settings.value
-        val kind = sim.kind
+        val kind = p.kind
         if (kind != shownKind) applyKind(kind)
         refreshLabels()
-        val now = flow.now
+        val now = p.now
         val rm = s.reducedMotion
         // swap: old tubes shrink (0..0.5), new ones grow (0.5..1) (S04)
-        val sp = flow.swapProgress
+        val sp = p.swapProgress
         val scaleY = when { sp == null -> 1f; sp < 0.5f -> max(0.05f, 1f - 2 * sp); else -> max(0.05f, 2 * sp - 1f) }
         for (i in 0 until 5) {
             val node = tubeNodes[i]
-            node.transform().setQuaternion(hangQuat(sim.tubeDir(i)))
+            node.transform().setQuaternion(hangQuat(p.tubeDir[i]))
             node.transform().setScaleVector(Vector3(1f, if (rm) 1f else scaleY, 1f))
             // glow: a band runs down the tube in 0.4 s and fades with the note (RM: the whole tube glows softly)
-            val age = (now - flow.tubeStruck[i]).toFloat()
+            val age = (now - p.tubeStruck[i]).toFloat()
             val band = bands[kind.ordinal][i]
             if (age in 0f..0.8f) {
                 band.enabled = true
@@ -432,31 +445,31 @@ internal class ChimeScene(private val context: Context, private val graph: Graph
                 }
             } else if (band.enabled) band.enabled = false
         }
-        clapperNode?.transform()?.setQuaternion(hangQuat(sim.clapperDir()))
-        sailNode?.let { n -> n.at(sim.sailPivot()); n.transform().setQuaternion(hangQuat(sim.sailDir())) }
+        clapperNode?.transform()?.setQuaternion(hangQuat(p.clapperDir))
+        sailNode?.let { n -> n.at(p.sailPivot); n.transform().setQuaternion(hangQuat(p.sailDir)) }
         // S01: the sail glows softly for 2 s ("you can pull this")
-        val hint = (flow.sailHintUntil - now).toFloat()
+        val hint = (p.sailHintUntil - now).toFloat()
         sailMats[kind]?.setEmissiveColor(if (hint > 0f) glow(0.35f, 0.28f, 0.12f, 0.5f + 0.5f * sin(now.toFloat() * 6f)) else BLACK)
         // tiles light with their tube (0.8 s)
         for (i in 0 until 5) {
-            val a = (now - flow.tokenLit[i]).toFloat()
+            val a = (now - p.tokenLit[i]).toFloat()
             tokenMats[i].setEmissiveColor(if (a in 0f..0.8f) glow(0.55f, 0.45f, 0.30f, 1f - a / 0.8f) else BLACK)
         }
         // panel tile: glows 2 s when the window closes (S07) or when tapped
         val open = graph.window.panelOpen
         if (lastPanelOpen && !open) panelGlowFrom = now
         lastPanelOpen = open
-        val pa = (now - max(panelGlowFrom, flow.panelTileGlow)).toFloat()
+        val pa = (now - max(panelGlowFrom, p.panelTileGlow)).toFloat()
         panelMat?.setEmissiveColor(if (pa in 0f..2f) glow(0.5f, 0.42f, 0.25f, 0.5f + 0.5f * cos(pa * 7f)) else BLACK)
         // the paper puffs (gust, tap on the screen)
-        val puff = (now - flow.screenPuff).toFloat()
+        val puff = (now - p.screenPuff).toFloat()
         paperEnt?.at(0f, 0f, 0.0025f + if (puff in 0f..0.4f && !rm) 0.006f * sin(PI.toFloat() * puff / 0.4f) else 0f)
         windLinesFrame(rm)
     }
 
     /** +GUST: six thin lines blow through the volume from the upwind side in 0.8 s (none with reduced motion). */
     private fun windLinesFrame(rm: Boolean) {
-        val gp = sim.gustProgress()
+        val gp = pose.gust
         if (gp == null || rm) { windLines.forEach { if (it.enabled) it.enabled = false }; return }
         val (g, p) = gp
         val dirx = g.dx; val dirz = g.dz
@@ -514,7 +527,8 @@ internal class ChimeScene(private val context: Context, private val graph: Graph
     /** Debug dump: world boxes of every visible part (ui-audit instance list). */
     fun dump(): String = buildString {
         append("scale=${"%.3f".format(VolumeScale.current.root)} viewRatio=${"%.3f".format(VolumeScale.current.viewRatio)} override=$scaleOverride ")
-        append("kind=${sim.kind.id} sail=${"%.1f".format(sim.sailDeg())} clapperH=${"%.3f".format(sim.clapperH())} maxTube=${"%.1f".format(sim.maxTubeDeg())} fps=${"%.1f".format(fps)}")
+        synchronized(flow.lock) { append("kind=${sim.kind.id} sail=${"%.1f".format(sim.sailDeg())} clapperH=${"%.3f".format(sim.clapperH())} maxTube=${"%.1f".format(sim.maxTubeDeg())} simT=${"%.2f".format(sim.time)} ") }
+        append("fps=${"%.1f".format(fps)} simRate=${"%.3f".format(graph.simLoop.lastRate)} throttle=${throttleMs}ms")
     }
 
     fun dispose() { synchronized(all) { all.forEach { runCatching { it.close() } }; all.clear() } }

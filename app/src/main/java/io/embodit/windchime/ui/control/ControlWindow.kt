@@ -323,7 +323,7 @@ private fun SettingsPage(settings: Settings, graph: Graph, windowH: Int) {
 /** D26 / D44 exit: stop the sounds, close both window containers, remove every task, then end the process. */
 internal fun exitApp(context: Context, graph: Graph) {
     Log.i(TAG, "EXIT release + close windows + finishAndRemoveTask + exitProcess")
-    runCatching { graph.flow.onBackground() }
+    runCatching { graph.simLoop.stop(); graph.flow.onBackground() }
     runCatching { graph.sounds.stopAll(); graph.sounds.release() }
     runCatching { graph.window.closeAll() }
     runCatching {

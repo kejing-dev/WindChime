@@ -53,8 +53,8 @@ class DebugCommandReceiver : BroadcastReceiver() {
             "goto" -> when (a.uppercase()) {
                 "S00" -> flow.showLoading(true)
                 "S01" -> { flow.hold(null); flow.showLoading(false); flow.showWelcome() }
-                "S02" -> { play(); flow.sim.rest() }
-                "S03" -> { play(); flow.sim.rest(); pull(graph, 0.12f, 0f, 0f, 600) { flow.hold("S03") } }
+                "S02" -> { play(); flow.restSim() }
+                "S03" -> { play(); flow.restSim(); pull(graph, 0.12f, 0f, 0f, 600) { flow.hold("S03") } }
                 "S04" -> { play(); val k = ChimeKind.entries[(flow.sim.kind.ordinal + 1) % 3]; flow.setChime(k); later(300) { flow.freezeSwapAt(0.45f) } }
                 "S05" -> { play(); Ui.page = Page.SETTINGS }
                 "S06" -> { play(); Ui.page = Page.SETTINGS; Ui.exitConfirm = true }
@@ -79,7 +79,9 @@ class DebugCommandReceiver : BroadcastReceiver() {
             }
             "gust" -> { val (dx, dz) = dirOf(f.getOrNull(1)); flow.gust(dx, dz, f.getOrNull(0)?.toFloatOrNull() ?: 1f, user = true) }
             "gustbutton" -> flow.gustButton()
-            "seed" -> flow.sim.reseed(a.toLongOrNull() ?: 7)
+            "seed" -> flow.reseed(a.toLongOrNull() ?: 7)
+            // v0.1.3 (D55): run the volume at a low frame rate (sleep per frame), e.g. `throttle 95` ~ 10 fps; `throttle 0` off
+            "throttle" -> { SceneHolder.scene?.throttleMs = (a.toLongOrNull() ?: 0L).coerceIn(0L, 500L); Log.i(TAG, "THROTTLE ${SceneHolder.scene?.throttleMs} ms/frame") }
             "hold" -> if (a == "off") flow.hold(null) else flow.hold(a.uppercase())
             "mute" -> settings { it.copy(muted = on) }
             "vol" -> settings { it.copy(volume = (a.toFloatOrNull() ?: 1f).coerceIn(0f, 1f)) }

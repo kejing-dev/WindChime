@@ -49,11 +49,13 @@ class Graph(context: Context) {
     val flow = ChimeFlow(
         settings = { settings.value },
         onSettings = { settings.set(it) },
-        onStrike = { s, k -> sounds.strike(s, k) },
+        onStrike = { s, k, lag -> sounds.strike(s, k, lag) },
         onSound = { sounds.fx(it) },
         log = { Log.i(TAG, it) },
     )
     val window = WindowCtl()
+    /** v0.1.3 (D55): the physics' own 360 Hz thread; started while the volume is in the foreground. */
+    val simLoop = io.embodit.windchime.domain.SimLoop(flow, log = { Log.i(TAG, it) })
 
     init {
         scope.launch {
@@ -192,17 +194,22 @@ class SoundPlayer(private val context: Context) {
 
     private fun wake() = synchronized(lock) { lock.notifyAll() }
 
-    /** A strike: volume from the hit speed, fixed pan from the tube's x (design sound.spatial fallback: +-0.3). */
-    fun strike(s: Strike, kind: ChimeKind) {
+    /**
+     * A strike: volume from the hit speed, fixed pan from the tube's x (design sound.spatial fallback: +-0.3).
+     * [lagS] >= 0 (physics, v0.1.3 D55): the strike happened that long ago in simulated time; it is scheduled at
+     * [SCHED_S] - lag on the mixer clock so strikes handed over in one batch keep their spacing. < 0: at once (taps).
+     */
+    fun strike(s: Strike, kind: ChimeKind, lagS: Double = -1.0) {
         if (muted) return
         val key = "${kind.id}:${s.tube}"
         val ids = tubes[key] ?: return
         val v = synchronized(variantNext) { (variantNext[key] ?: 0).also { variantNext[key] = (it + 1) % ids.size } }
         val vol = (s.volume * volume).coerceIn(0f, 1f)
         if (vol <= 0.001f) return
-        mixer.play(ids[v % ids.size], vol, Mixer.tubePan(s.tube), key, duckable = true)
+        val delay = if (lagS < 0) 0f else (SCHED_S - lagS).toFloat().coerceAtLeast(0f)
+        mixer.play(ids[v % ids.size], vol, Mixer.tubePan(s.tube), key, duckable = true, delayS = delay)
         wake()
-        Log.i(TAG, "SOUND ${kind.id} ${s.tube + 1} vol=${"%.2f".format(vol)} src=${s.source} duck=${"%.2f".format(mixer.lastDuck)}")
+        Log.i(TAG, "SOUND ${kind.id} ${s.tube + 1} vol=${"%.2f".format(vol)} src=${s.source} t=${"%.4f".format(s.t)} delay=${"%.1f".format(delay * 1000)}ms duck=${"%.2f".format(mixer.lastDuck)}")
     }
 
     fun fx(f: ChimeFlow.Fx) {
@@ -227,6 +234,8 @@ class SoundPlayer(private val context: Context) {
     companion object {
         const val SR = 44100
         const val BUFFER_FRAMES = 960
+        /** Physics strikes play this long after their simulated time (covers the sim thread's batch, ~3 ms normally). */
+        const val SCHED_S = 0.03
         /** The gust whoosh sits about 18 dB under a full strike; the paper rustle lower still (assets: sound). */
         const val GUST_LEVEL = 0.35f
         const val RUSTLE_LEVEL = 0.2f

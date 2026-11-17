@@ -42,11 +42,17 @@ class Mixer(val sampleRate: Int = 44100) {
         val done get() = pos >= s.pcm.size || (fadeStep > 0f && fade <= 0f)
     }
 
-    private class Cmd(val s: Sample, val gain: Float, val pan: Float, val key: String, val duckable: Boolean)
+    /** A queued note; [at] = the output frame it starts on (0 = at once). */
+    private class Cmd(val s: Sample, val gain: Float, val pan: Float, val key: String, val duckable: Boolean, val at: Long)
 
     private val pending = ArrayDeque<Cmd>()
     private val voices = ArrayList<Voice>()
     private var serial = 0L
+    /** Frames rendered so far: the mixer's own clock for scheduled notes (v0.1.3, D55). */
+    var clock = 0L
+        private set
+    /** Onset frame of every note (test hook; the last [ONSET_LOG] only). */
+    val onsets = ArrayDeque<Long>()
 
     // limiter state
     private val delayL = FloatArray(LOOKAHEAD)
@@ -64,10 +70,21 @@ class Mixer(val sampleRate: Int = 44100) {
 
     val active: Int get() = synchronized(this) { voices.size + pending.size }
 
-    /** Queue a note (any thread). [pan] -1..1 (left..right), equal-gain law clipped at 1 per side as before. */
-    fun play(s: Sample, gain: Float, pan: Float = 0f, key: String = "", duckable: Boolean = true) {
+    /**
+     * Queue a note (any thread). [pan] -1..1 (left..right), equal-gain law clipped at 1 per side as before.
+     * [delayS] > 0 starts it that much later on the output clock, to the frame (v0.1.3, D55: the physics thread hands
+     * over strikes in batches, each placed at its own simulated time instead of all at the batch end).
+     */
+    fun play(s: Sample, gain: Float, pan: Float = 0f, key: String = "", duckable: Boolean = true, delayS: Float = 0f) {
         if (gain <= 0.0005f) return
-        synchronized(this) { pending.addLast(Cmd(s, gain, pan, key, duckable)) }
+        synchronized(this) {
+            val at = if (delayS <= 0f) 0L else clock + (delayS * sampleRate).toLong()
+            val c = Cmd(s, gain, pan, key, duckable, at)
+            // keep the queue sorted by start frame (stable: equal frames stay in call order)
+            var i = pending.size
+            while (i > 0 && pending[i - 1].at > at) i--
+            pending.add(i, c)
+        }
     }
 
     /** Fade everything out over 80 ms (mute, background). */
@@ -80,8 +97,9 @@ class Mixer(val sampleRate: Int = 44100) {
 
     /** Renders [frames] interleaved stereo frames into [out] (overwrites). */
     fun render(out: FloatArray, frames: Int) = synchronized(this) {
-        while (pending.isNotEmpty()) onset(pending.removeFirst())
         for (f in 0 until frames) {
+            while (pending.isNotEmpty() && pending.first().at <= clock) onset(pending.removeFirst())
+            clock++
             var l = 0f; var r = 0f
             for (v in voices) {
                 if (v.delay > 0) { v.delay--; continue }
@@ -117,6 +135,7 @@ class Mixer(val sampleRate: Int = 44100) {
         val gl = c.gain * min(1f, 1f - c.pan)
         val gr = c.gain * min(1f, 1f + c.pan)
         val v = Voice(c.s, c.key, c.duckable, gl, gr, serial++)
+        onsets.addLast(clock); while (onsets.size > ONSET_LOG) onsets.removeFirst()
         // polyphony
         val live = voices.filter { it.fadeStep == 0f }
         if (c.key.isNotEmpty()) {
@@ -193,6 +212,7 @@ class Mixer(val sampleRate: Int = 44100) {
         const val LATENCY = DUCK_RAMP + LOOKAHEAD
         const val FADE_S = 0.08f
         const val MAX_VOICES = 16
+        const val ONSET_LOG = 256
         val DUCK_STEPS = floatArrayOf(1f, 0.85f, 0.7f, 0.58f, 0.48f, 0.4f, 0.33f, 0.27f, 0.22f, 0.18f, 0.14f, 0.11f, 0.085f, 0.065f, 0.05f, 0.035f, 0.025f, 0.015f)
 
         /** The pan of a tube (design sound.spatial fallback: +-0.3 by the tube's x). */

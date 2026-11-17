@@ -52,13 +52,16 @@ sealed class Hit {
 
 /**
  * The single app flow (design states S00..S08 + STRIKE / SWING / GUST): every input path (3D taps and drags, window
- * buttons, the debug broadcast) calls these same methods (D29). Time comes from [tick] (the ECS frame), so the
- * simulation never runs in Compose.
+ * buttons, the debug broadcast) calls these same methods (D29). Time comes from [tick], called by [SimLoop] on its
+ * own 360 Hz thread by the monotonic clock (v0.1.3, D55: not by the render frame, which the system may drop to
+ * 10 fps), so the simulation never runs in Compose or in the ECS frame.
  */
 class ChimeFlow(
     private val settings: () -> Settings,
     private val onSettings: (Settings) -> Unit,
-    private val onStrike: (Strike, ChimeKind) -> Unit,
+    /** A tube sounded. [lagS] = how long ago in simulated time it happened (>= 0, physics; the mixer keeps the
+     *  spacing), or -1 for a direct tap / swap note that plays at once. */
+    private val onStrike: (Strike, ChimeKind, Double) -> Unit,
     private val onSound: (Fx) -> Unit,
     private val log: (String) -> Unit,
 ) {
@@ -66,6 +69,11 @@ class ChimeFlow(
     enum class Fx { GUST, RUSTLE }
 
     val sim = ChimeSim(settings().chime)
+    /**
+     * v0.1.3 (D55): the physics runs on [SimLoop]'s own thread, input arrives on the main / binder threads and the
+     * volume reads a [ChimePose] snapshot per render frame. Every entry point takes this lock.
+     */
+    val lock = Any()
     private val _ui = MutableStateFlow(FlowUi())
     val ui: StateFlow<FlowUi> = _ui.asStateFlow()
 
@@ -102,14 +110,14 @@ class ChimeFlow(
     private var gustFired = false
     private var grabFrom = V3.ZERO
 
-    fun start() {
+    fun start(): Unit = synchronized(lock) {
         sim.setKind(settings().chime)
         sim.windTarget = Phys.WIND_MEAN[settings().wind.index]
         log("FLOW start chime=${settings().chime.id} wind=${settings().wind} firstRun=${!settings().firstRunDone}")
     }
 
     /** The volume's meshes are in: S00 ends (S01 the first time, otherwise S02). */
-    fun sceneReady() {
+    fun sceneReady(): Unit = synchronized(lock) {
         if (_ui.value.phase != Phase.LOADING) return
         val first = !settings().firstRunDone
         _ui.value = _ui.value.copy(phase = if (first) Phase.WELCOME else Phase.PLAY)
@@ -118,7 +126,7 @@ class ChimeFlow(
     }
 
     /** S01 [开始] (or any touch in the volume): the welcome is over for good. */
-    fun welcomeDone() {
+    fun welcomeDone(): Unit = synchronized(lock) {
         if (_ui.value.phase == Phase.WELCOME) {
             _ui.value = _ui.value.copy(phase = Phase.PLAY)
             onSettings(settings().copy(firstRunDone = true))
@@ -127,17 +135,18 @@ class ChimeFlow(
     }
 
     /** Debug `goto S01`: show the welcome again. */
-    fun showWelcome() { _ui.value = _ui.value.copy(phase = Phase.WELCOME); sailHintUntil = now + 2.0 }
+    fun showWelcome(): Unit = synchronized(lock) { _ui.value = _ui.value.copy(phase = Phase.WELCOME); sailHintUntil = now + 2.0 }
 
     /** Debug `goto S00`. */
-    fun showLoading(on: Boolean) { _ui.value = _ui.value.copy(phase = if (on) Phase.LOADING else Phase.PLAY) }
+    fun showLoading(on: Boolean): Unit = synchronized(lock) { _ui.value = _ui.value.copy(phase = if (on) Phase.LOADING else Phase.PLAY) }
 
-    fun tick(dt: Float) {
+    fun tick(dt: Float): Unit = synchronized(lock) {
         if (held) return
         now += dt
         advanceSwap(dt)
         val strikes = sim.advance(dt)
-        for (s in strikes) strike(s)
+        // each strike keeps its own simulated time: the mixer places it that far back from the batch end (D55)
+        for (s in strikes) strike(s, (sim.time - s.t).coerceAtLeast(0.0))
         // a gust drag fires after 0.3 s even while still held (physics.userGust)
         if (drag == DragKind.GUST && !gustFired && now - dragT0 >= 0.3) fireGust()
         if (_ui.value.tagline != null && now - lastTouch > 6.0) _ui.value = _ui.value.copy(tagline = null)
@@ -151,27 +160,27 @@ class ChimeFlow(
         if (_ui.value.tagline != null && swapProgress == null) _ui.value = _ui.value.copy(tagline = null)
     }
 
-    private fun strike(s: Strike) {
+    private fun strike(s: Strike, lagS: Double = -1.0) {
         strikesTotal++
         tubeStruck[s.tube] = now
         tokenLit[s.tube] = now
         log("strike=${sim.kind.id},${s.tube + 1},${"%.2f".format(s.speed)} src=${s.source}")
-        onStrike(s, sim.kind)
+        onStrike(s, sim.kind, lagS)
     }
 
     // ------------------------------------------------------------------ taps
 
-    fun tapTube(i: Int) { touched(); if (swapProgress != null) return; strike(sim.tapTube(i)) }
+    fun tapTube(i: Int): Unit = synchronized(lock) { touched(); if (swapProgress != null) return; strike(sim.tapTube(i)) }
 
-    fun tapToken(i: Int) { touched(); if (swapProgress != null) return; strike(sim.tapTube(i, token = true)) }
+    fun tapToken(i: Int): Unit = synchronized(lock) { touched(); if (swapProgress != null) return; strike(sim.tapTube(i, token = true)) }
 
-    fun tapSail() { touched(); sim.tapSail(); log("TAP sail push") }
+    fun tapSail(): Unit = synchronized(lock) { touched(); sim.tapSail(); log("TAP sail push") }
 
     /**
      * A tap that landed on the paper screen (T5): a strip index (the invisible strips behind the ring) or the ray
      * fallback's nearest tube rings that tube; otherwise the paper puffs with a faint rustle.
      */
-    fun tapScreen(tube: Int?) {
+    fun tapScreen(tube: Int?): Unit = synchronized(lock) {
         touched()
         if (tube != null && swapProgress == null) { log("SCREEN tap -> tube ${tube + 1}"); strike(sim.tapTube(tube)); return }
         screenPuff = now
@@ -179,7 +188,7 @@ class ChimeFlow(
         onSound(Fx.RUSTLE)
     }
 
-    fun tapPanelTile(panelOpen: Boolean, reopen: () -> Unit, flash: () -> Unit) {
+    fun tapPanelTile(panelOpen: Boolean, reopen: () -> Unit, flash: () -> Unit): Unit = synchronized(lock) {
         touched()
         panelTileGlow = now
         if (panelOpen) flash() else reopen()
@@ -188,7 +197,7 @@ class ChimeFlow(
     // ------------------------------------------------------------------ drags
 
     /** A drag began on [hit] (travel >= 2 cm). Sail = grab (S03); screen / strip / tube = a gust gesture. */
-    fun dragStart(hit: Hit, total: V3): Boolean {
+    fun dragStart(hit: Hit, total: V3): Boolean = synchronized(lock) {
         touched()
         return when (hit) {
             Hit.Sail -> {
@@ -209,12 +218,12 @@ class ChimeFlow(
         }
     }
 
-    fun dragMove(total: V3) {
+    fun dragMove(total: V3): Unit = synchronized(lock) {
         dragLast = total
         if (drag == DragKind.SAIL) sim.grabTarget = grabFrom + total
     }
 
-    fun dragEnd() {
+    fun dragEnd(): Unit = synchronized(lock) {
         when (drag) {
             DragKind.SAIL -> release()
             DragKind.GUST -> if (!gustFired) fireGust()
@@ -243,13 +252,13 @@ class ChimeFlow(
     }
 
     /** [来一阵风] (T6): a random direction, strength 0.8. Debug `gust` passes its own. */
-    fun gustButton(rng: java.util.Random = java.util.Random()) {
+    fun gustButton(rng: java.util.Random = java.util.Random()): Unit = synchronized(lock) {
         touched()
         val a = rng.nextDouble() * Math.PI * 2
         gust(kotlin.math.sin(a).toFloat(), kotlin.math.cos(a).toFloat(), 0.8f, user = true)
     }
 
-    fun gust(dx: Float, dz: Float, strength: Float, user: Boolean) {
+    fun gust(dx: Float, dz: Float, strength: Float, user: Boolean): Unit = synchronized(lock) {
         sim.gust(dx, dz, strength)
         lastGust = sim.gustProgress()?.first
         lastGustAt = now
@@ -261,7 +270,7 @@ class ChimeFlow(
     // ------------------------------------------------------------------ settings-driven
 
     /** T7: swap chimes (disabled while the sail is held). */
-    fun setChime(k: ChimeKind): Boolean {
+    fun setChime(k: ChimeKind): Boolean = synchronized(lock) {
         if (_ui.value.holding) { log("SWAP refused: holding"); return false }
         if (k == sim.kind && swapProgress == null) { onSettings(settings().copy(chime = k)); return true }
         touched()
@@ -278,7 +287,7 @@ class ChimeFlow(
     }
 
     /** Swap timeline, driven from [tick] through [advanceSwap]. */
-    fun advanceSwap(dt: Float) {
+    fun advanceSwap(dt: Float): Unit = synchronized(lock) {
         val to = swapTo ?: return
         swapT += dt
         val t = swapT
@@ -291,7 +300,7 @@ class ChimeFlow(
         while (swapNotesPlayed < 3 && t >= 0.45 + swapNotesPlayed * 0.12) {
             val i = notes[swapNotesPlayed++]
             tubeStruck[i] = now; tokenLit[i] = now
-            onStrike(Strike(i, Phys.TAP_SOUND_V, Strike.Source.SWAP, Phys.SWAP_GAIN), to)
+            onStrike(Strike(i, Phys.TAP_SOUND_V, Strike.Source.SWAP, Phys.SWAP_GAIN), to, -1.0)
         }
         swapProgress = (t / 0.6).toFloat().coerceAtMost(1f)
         if (t >= 0.85) {
@@ -301,14 +310,14 @@ class ChimeFlow(
         }
     }
 
-    fun setWind(w: WindLevel) {
+    fun setWind(w: WindLevel): Unit = synchronized(lock) {
         sim.windTarget = Phys.WIND_MEAN[w.index]
         onSettings(settings().copy(wind = w))
         log("WIND W${w.index}")
     }
 
     /** Leaving the foreground: everything stops and comes back still (design lifecycle). */
-    fun onBackground() {
+    fun onBackground(): Unit = synchronized(lock) {
         if (drag == DragKind.SAIL) release()
         drag = null
         sim.grabTarget = null
@@ -318,15 +327,45 @@ class ChimeFlow(
 
     // ------------------------------------------------------------------ debug holds
 
-    fun hold(name: String?) {
+    fun hold(name: String?): Unit = synchronized(lock) {
         held = name != null
         heldName = name
         log("HOLD ${name ?: "off"}")
     }
 
     /** Debug `hold S04`: freeze a swap half way. */
-    fun freezeSwapAt(p: Float) {
+    fun freezeSwapAt(p: Float): Unit = synchronized(lock) {
         swapProgress = p; held = true; heldName = "S04"
+    }
+
+    // ------------------------------------------------------------------ debug helpers (same lock)
+
+    fun restSim(): Unit = synchronized(lock) { sim.rest() }
+    fun reseed(seed: Long): Unit = synchronized(lock) { sim.reseed(seed) }
+
+    // ------------------------------------------------------------------ render snapshot
+
+    /** Everything the volume draws this frame, copied under [lock] (the sim thread never waits on the renderer). */
+    fun snapshot(into: ChimePose = ChimePose()): ChimePose = synchronized(lock) {
+        into.kind = sim.kind
+        into.now = now
+        into.simTime = sim.time
+        for (i in 0 until 5) {
+            into.tubeDir[i] = sim.tubeDir(i)
+            into.tubeStruck[i] = tubeStruck[i]
+            into.tokenLit[i] = tokenLit[i]
+        }
+        into.clapperDir = sim.clapperDir()
+        into.sailPivot = sim.sailPivot()
+        into.sailDir = sim.sailDir()
+        into.sailDeg = sim.sailDeg()
+        into.swapProgress = swapProgress
+        into.sailHintUntil = sailHintUntil
+        into.panelTileGlow = panelTileGlow
+        into.screenPuff = screenPuff
+        into.gust = sim.gustProgress()
+        into.strikesTotal = strikesTotal
+        into
     }
 
     // ------------------------------------------------------------------ derived
@@ -336,7 +375,7 @@ class ChimeFlow(
     fun strikeOn(): Boolean = tubeStruck.any { now - it < 0.8 }
 
     /** Named state for logs / the debug `state` dump (design stateModel: main state + overlays). */
-    fun stateId(page: Page, exitConfirm: Boolean, panelOpen: Boolean): String {
+    fun stateId(page: Page, exitConfirm: Boolean, panelOpen: Boolean): String = synchronized(lock) {
         val u = _ui.value
         val main = when {
             u.phase == Phase.LOADING -> "S00"
@@ -358,9 +397,29 @@ class ChimeFlow(
             if (s.muted) add("MUTE")
             if (s.reducedMotion) add("RM")
         }
-        return (listOf(main) + mods).joinToString("+")
+        (listOf(main) + mods).joinToString("+")
     }
 
     @Suppress("unused")
     private fun near(a: Float, b: Float) = abs(a - b) < 1e-4f
+}
+
+/** A render-frame copy of the chime's pose and timers ([ChimeFlow.snapshot]). */
+class ChimePose {
+    var kind: ChimeKind = ChimeKind.BRASS
+    var now = 0.0
+    var simTime = 0.0
+    val tubeDir = Array(5) { V3(0f, -1f, 0f) }
+    val tubeStruck = DoubleArray(5) { -10.0 }
+    val tokenLit = DoubleArray(5) { -10.0 }
+    var clapperDir = V3(0f, -1f, 0f)
+    var sailPivot = V3.ZERO
+    var sailDir = V3(0f, -1f, 0f)
+    var sailDeg = 0f
+    var swapProgress: Float? = null
+    var sailHintUntil = -10.0
+    var panelTileGlow = -10.0
+    var screenPuff = -10.0
+    var gust: Pair<Gust, Float>? = null
+    var strikesTotal = 0
 }

@@ -59,6 +59,7 @@ Every command calls the same `ChimeFlow` methods as the window and the 3D input.
 | S05 设置 / S06 退出确认 / S08 怎么玩 | `goto S05` / `goto S06` / `goto S08` |
 | S07 面板关了 | `goto S07` (system-closes the window; the panel tile glows 2 s) ; `tap panel` reopens it |
 | MUTE / LANG | `mute on|off`, `lang zh|en|system` |
+| Low frame rate (D55) | `throttle 95` sleeps 95 ms per volume frame (~10 fps); `throttle 0` off. Log `FRAME fps=… simRate=…` and `SIM rate=…` every 5 s (should stay 1.000) |
 Other: `strike n`, `token n`, `tap <holder>`, `tapscreen "<x> <y>"`, `grab` / `drag "dx dy dz"` / `release`, `swipe "dx dz"`,
 `gustbutton`, `vol 0..1`, `gustsound on|off`, `page play|howto|settings`, `exitask`, `closepanel`, `reopen`, `testf on|off`,
 `vscale <k>|off` (pretend a k x resize), `lightfloor on|off` (emissive floor), `envlight <0..1>` (environment light scale)

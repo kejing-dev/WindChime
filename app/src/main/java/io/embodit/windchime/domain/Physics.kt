@@ -22,7 +22,14 @@ object Phys {
     const val G = 9.81f
     const val HZ = 360
     const val H = 1f / HZ
-    const val MAX_SUBSTEPS = 8
+    /**
+     * v0.1.3 (D55, gate low-fps-slowmo): one call may catch up 0.25 s (90 substeps). The app no longer steps the
+     * physics from the render frame at all ([SimLoop] runs it on its own 360 Hz thread by the monotonic clock); this
+     * cap only bounds a catch-up after a stall, so a 10 fps container never slows the simulated time down.
+     */
+    const val MAX_SUBSTEPS = 90
+    /** Longest catch-up in one go (s); beyond it the backlog is dropped (app paused, debugger). */
+    const val MAX_CATCHUP_S = 0.25f // = MAX_SUBSTEPS / HZ
     /** Free-swing damping: amplitude e^(-c t / 2) reaches 1/1000 in 8 s. */
     val DAMP = (2.0 * kotlin.math.ln(1000.0) / 8.0).toFloat()
     const val M_CLAPPER = 1.0f
@@ -226,11 +233,14 @@ class ChimeSim(kind: ChimeKind = ChimeKind.BRASS, seed: Long = 7) {
 
     // ------------------------------------------------------------------ stepping
 
-    /** Advances by the real frame time [dt] (seconds) in fixed substeps; returns the strikes that sounded. */
+    /**
+     * Advances by [dt] seconds in fixed 1/360 s substeps (up to [Phys.MAX_CATCHUP_S] per call); returns the strikes
+     * that sounded, each stamped with its own simulated time [Strike.t].
+     */
     fun advance(dt: Float): List<Strike> {
         out.clear()
-        acc += dt.coerceIn(0f, 0.25f)
-        var n = floor(acc * Phys.HZ + 1e-6).toInt()
+        acc += dt.coerceIn(0f, Phys.MAX_CATCHUP_S)
+        var n = floor(acc * Phys.HZ + 1e-4).toInt()
         acc -= n.toDouble() / Phys.HZ
         if (n > Phys.MAX_SUBSTEPS) { n = Phys.MAX_SUBSTEPS; acc = 0.0 }
         repeat(n) { step() }

@@ -14,7 +14,7 @@ class VolumeScaleTest {
 
     private fun rig(): ChimeFlow {
         var st = Settings(firstRunDone = true)
-        return ChimeFlow({ st }, { st = it }, { _, _ -> }, { }, {}).apply { start(); sceneReady() }
+        return ChimeFlow({ st }, { st = it }, { _, _, _ -> }, { }, {}).apply { start(); sceneReady() }
     }
 
     @Test fun measuredSizeGivesTheRootScale() {

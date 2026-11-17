@@ -12,7 +12,7 @@ class FlowTest {
         var settings = Settings(firstRunDone = !first)
         val strikes = ArrayList<Pair<Strike, ChimeKind>>()
         val fx = ArrayList<ChimeFlow.Fx>()
-        val flow = ChimeFlow({ settings }, { settings = it }, { s, k -> strikes += s to k }, { fx += it }, {})
+        val flow = ChimeFlow({ settings }, { settings = it }, { s, k, _ -> strikes += s to k }, { fx += it }, {})
         fun run(sec: Float) { repeat((sec * 90).toInt()) { flow.tick(1f / 90) } }
     }
 

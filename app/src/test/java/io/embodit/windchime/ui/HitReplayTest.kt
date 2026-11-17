@@ -39,7 +39,7 @@ class HitReplayTest {
     @Test fun everyHolderReachesItsFlowCall() {
         var s = Settings(firstRunDone = true)
         val strikes = ArrayList<Strike>(); val fx = ArrayList<ChimeFlow.Fx>()
-        val flow = ChimeFlow({ s }, { s = it }, { st, _ -> strikes += st }, { fx += it }, {})
+        val flow = ChimeFlow({ s }, { s = it }, { st, _, _ -> strikes += st }, { fx += it }, {})
         flow.sceneReady()
         for (i in 1..5) { route(flow, Hit.of("tube:$i"), null, true); assertEquals(i - 1, strikes.last().tube); repeat(20) { flow.tick(1f / 90) } }
         for (i in 1..5) { route(flow, Hit.of("token:$i"), null, true); assertEquals(Strike.Source.TOKEN, strikes.last().source); assertEquals(i - 1, strikes.last().tube); repeat(20) { flow.tick(1f / 90) } }

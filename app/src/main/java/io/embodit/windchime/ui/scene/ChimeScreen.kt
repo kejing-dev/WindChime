@@ -45,7 +45,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 
-/** Runs the chime's per-frame simulation inside the ECS (never in Compose). */
+/** Copies the chime's latest pose into the scene each render frame (v0.1.3: the physics runs on [io.embodit.windchime.domain.SimLoop]). */
 class ChimeFrameSystem : System() {
     override fun update(context: SceneUpdateContext) {
         SceneHolder.scene?.onFrame(context.deltaTime)
@@ -81,8 +81,8 @@ fun ChimeScreen() {
     DisposableEffect(owner) {
         val obs = LifecycleEventObserver { _, e ->
             when (e) {
-                Lifecycle.Event.ON_STOP -> { Log.i(TAG, "LIFECYCLE background"); graph.flow.onBackground(); graph.sounds.stopAll() }
-                Lifecycle.Event.ON_START -> Log.i(TAG, "LIFECYCLE foreground")
+                Lifecycle.Event.ON_STOP -> { Log.i(TAG, "LIFECYCLE background"); graph.simLoop.stop(); graph.flow.onBackground(); graph.sounds.stopAll() }
+                Lifecycle.Event.ON_START -> { Log.i(TAG, "LIFECYCLE foreground"); graph.simLoop.start() }
                 // the launcher icon tapped again brings the volume back; the panel comes with it
                 Lifecycle.Event.ON_RESUME -> if (graph.window.panelState == "ON_DESTROY") graph.window.open("resume")
                 else -> Unit
@@ -95,7 +95,9 @@ fun ChimeScreen() {
     DisposableEffect(scene) {
         SceneHolder.scene = scene
         registerSystem<ChimeFrameSystem>()
+        graph.simLoop.start()
         onDispose {
+            graph.simLoop.stop()
             unregisterSystem<ChimeFrameSystem>()
             if (SceneHolder.scene === scene) SceneHolder.scene = null
             scene.dispose()

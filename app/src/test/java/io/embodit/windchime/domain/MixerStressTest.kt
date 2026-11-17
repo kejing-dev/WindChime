@@ -11,7 +11,7 @@ import kotlin.math.log10
  * QA #2 q2-1 acceptance (based on QA's QaStressTest.kt.txt): the same tube struck 10 times, every tube x every chime
  * x 100 / 150 / 250 / 400 ms, through the app's own [Mixer] with the real CC0 samples (variant alternation, pan, key as
  * SoundPlayer plays them). Attack peaks (100 ms window) spread < 1 dB and the whole bus stays <= -1.5 dBFS (never at
- * the -1 dBFS limiter). Writes build/loudness/stress-v0.1.2.txt.
+ * the -1 dBFS limiter). Writes build/loudness/stress-v0.1.3.txt.
  */
 class MixerStressTest {
     private val sr = 44100
@@ -48,7 +48,7 @@ class MixerStressTest {
     @Test fun sameTubeTenStrikesEveryTubeEveryChime() {
         assumeTrue("ffmpeg on PATH", ffmpeg())
         val tap = Strike(0, Phys.TAP_SOUND_V, Strike.Source.TOKEN).volume
-        val sb = StringBuilder("# v0.1.2 same-tube x10 stress (app Mixer + real CC0 samples, rendered), tap volume ${"%.3f".format(tap)}, attack window 100 ms\n")
+        val sb = StringBuilder("# v0.1.3 same-tube x10 stress (app Mixer + real CC0 samples, rendered), tap volume ${"%.3f".format(tap)}, attack window 100 ms\n")
         sb.append("# pass: spread < 1.00 dB and bus peak <= -1.50 dBFS\n")
         val fails = ArrayList<String>()
         var worstSpread = 0.0; var worstBus = -99.0
@@ -63,7 +63,7 @@ class MixerStressTest {
             sb.append(line).append('\n'); if (!ok) fails += line
         }
         sb.append("# worst spread ${"%.2f".format(worstSpread)} dB, worst bus peak ${"%.2f".format(worstBus)} dBFS, ${60 - fails.size}/60 PASS\n")
-        File("build/loudness").apply { mkdirs() }.resolve("stress-v0.1.2.txt").writeText(sb.toString())
+        File("build/loudness").apply { mkdirs() }.resolve("stress-v0.1.3.txt").writeText(sb.toString())
         print(sb)
         assertTrue(fails.joinToString("\n"), fails.isEmpty())
     }
