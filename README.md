@@ -25,7 +25,7 @@
 | ![一阵风](docs/screenshots/05-gust-zh.jpg) 在屏风上划一阵风 | ![怎么玩](docs/screenshots/06-howto-zh.jpg) 怎么玩 |
 | ![设置](docs/screenshots/07-settings-zh.jpg) 设置 | |
 
-> 截图（v0.1.3 拍，v0.1.4 只改声音、画面相同）和演示视频（v0.1.2 录，画面相同）都在 PICO 模拟器里拍，用调试广播驱动（模拟器发不出 3D 捏合 / 拖动），**非真实手势录像**；演示视频没有声音。
+> 截图（v0.1.4 拍）和演示视频（v0.1.2 录，画面相同）都在 PICO 模拟器里拍，用调试广播驱动（模拟器发不出 3D 捏合 / 拖动），**非真实手势录像**；演示视频没有声音。
 
 ### 安装
 
@@ -45,7 +45,7 @@ pico-cli app launch io.embodit.windchime
 - 主机过载时，模拟时间和真实时间可能相差约 ±3 %
 - 头显上偶发的慢帧来源还没定位
 - 最暗的环境光下，木锤和屏风右下的小木牌接近黑色
-- 以下只在模拟器上验过（模拟器大风 60 s 欠载 0 次），待真机确认：头显上大风是否不再噼啪 / 刺耳、关掉系统空间音频后左右方位的听感、缩放后拉帆 / 划风是否跟手、手 / 手柄 / 眼手三种输入
+- 真机：用户 2026-11-17 在 PICO 头显上看过 v0.1.4 并放行；头显日志 23 条 MIX 行全是 underruns=0（v0.1.3 在 35 s 内涨到 2301）
 
 ## English
 
@@ -68,7 +68,7 @@ A small walnut stand with a paper screen behind it and a five-tube wind chime, f
 | ![Gust](docs/screenshots/05-gust-en.jpg) Swipe a gust | ![How to play](docs/screenshots/06-howto-en.jpg) How to play |
 | ![Settings](docs/screenshots/07-settings-en.jpg) Settings | |
 
-> Screenshots (v0.1.3; v0.1.4 only changes audio, visuals are the same) and the demo video (recorded on v0.1.2, same visuals) were captured on the PICO emulator, driven by a debug broadcast (the emulator can't send 3D pinches or drags): **not a real hand-gesture recording**. The demo video has no sound.
+> Screenshots (v0.1.4) and the demo video (recorded on v0.1.2, same visuals) were captured on the PICO emulator, driven by a debug broadcast (the emulator can't send 3D pinches or drags): **not a real hand-gesture recording**. The demo video has no sound.
 
 ### Install
 
@@ -88,7 +88,7 @@ Requires PICO OS 6 (Android 15, minSdk 35), Spatial SDK 6.1.9.
 - When the host is overloaded, simulated time may drift about ±3 % from the wall clock
 - The source of occasional slow frames on the headset is not yet located
 - In the darkest ambient light the clapper and the small wooden tile at the screen's lower right look almost black
-- Verified on the emulator only (0 underruns in a 60 s gale), headset check pending: no crackle in a gale on the headset, left / right placement with the system spatializer off, sail / gust after resizing, hand / controller / gaze input
+- Headset: the user checked v0.1.4 on a PICO headset on 2026-11-17 and approved it; all 23 MIX lines in the headset log show underruns=0 (v0.1.3 reached 2301 in 35 s)
 
 ## Build / 构建
 
