@@ -15,6 +15,7 @@
 - **体积可缩放**：风铃放在系统的立体窗口（Shared Space 体积）里，可拖动、等比缩放，内容和手势都跟着缩放
 - **光照**：暖色方向光 + 环境光和材质亮度兜底
 - **大风不卡**：物理在独立的 360 Hz 线程上按真实时钟走，系统把体积降到 10 fps 时风铃也不慢动作；碰撞声按发生时刻排进混音，不挤成一团（v0.1.3）
+- **不断音**：混音线程用系统音频优先级、不加锁不分配，绕开系统空间化线程，大风下也不噼啪（v0.1.4）
 - 手势捏合 / 眼动 + 捏合 / 手柄射线；中英双语；全部本机运行，不联网、不需要账号
 
 | | |
@@ -56,6 +57,7 @@ A small walnut stand with a paper screen behind it and a five-tube wind chime, f
 - **Resizable**: the chime lives in a system volume you can move and scale uniformly; content and gestures follow the size
 - **Light**: a warm key light plus an ambient / material floor
 - **Smooth in a gale**: physics runs on its own 360 Hz thread by the wall clock, so when the system drops the volume to 10 fps the chime keeps real speed; strike sounds are placed at the moment they happen instead of bunching up (v0.1.3)
+- **No crackle**: the mix thread runs at audio priority with no locks or allocation and skips the system spatializer thread, so a gale stays clean (v0.1.4)
 - Hand pinch, gaze + pinch, controller ray; Chinese and English; fully offline, no account
 
 | | |

@@ -12,11 +12,18 @@ import java.util.concurrent.locks.LockSupport
  * reads [ChimeFlow.snapshot] per frame; the mixer places each strike at its simulated time.
  *
  * [pump] is plain Kotlin with an injected clock so the unit test runs it at any wake / frame rate.
+ *
+ * v0.1.4 (headset v0.1.3: audio underruns ~70/s, client_cpu_cost 100-157 ms): the thread no longer wakes 360 times a
+ * second at a raised priority. It wakes every [WAKE_NS] (120 Hz) and runs the 1/360 s steps that have elapsed (usually
+ * 3), at the normal priority set by [threadSetup] (below the render and audio threads). The physics step and the
+ * simulated clock are unchanged, so strikes keep their simulated times (the mixer schedules them 30 ms out).
  */
 class SimLoop(
     private val flow: ChimeFlow,
     private val clock: () -> Long = System::nanoTime,
     private val log: (String) -> Unit = {},
+    /** Runs first on the sim thread (the app sets an Android thread priority here). */
+    private val threadSetup: () -> Unit = {},
 ) {
     @Volatile var running = false
         private set
@@ -41,8 +48,8 @@ class SimLoop(
         if (running) return
         lastNs = clock(); carryNs = 0L; resetWindow()
         running = true
-        thread = Thread(::loop, "WindChimeSim").apply { priority = Thread.MAX_PRIORITY - 1; isDaemon = true; start() }
-        log("SIM start ${Phys.HZ} Hz, catch-up <= ${Phys.MAX_CATCHUP_S} s")
+        thread = Thread(::loop, "WindChimeSim").apply { isDaemon = true; start() }
+        log("SIM start ${Phys.HZ} Hz steps, wake ${1_000_000_000L / WAKE_NS} Hz, catch-up <= ${Phys.MAX_CATCHUP_S} s")
     }
 
     @Synchronized fun stop() {
@@ -54,9 +61,10 @@ class SimLoop(
     }
 
     private fun loop() {
+        runCatching(threadSetup)
         while (running) {
             pump(clock())
-            LockSupport.parkNanos(STEP_NS)
+            LockSupport.parkNanos(WAKE_NS)
         }
     }
 
@@ -93,5 +101,7 @@ class SimLoop(
         /** 1/360 s in nanoseconds (2 777 777 ns: the simulated clock runs 0.3 ppm fast, far inside the +-1 % budget). */
         const val STEP_NS = 1_000_000_000L / Phys.HZ
         const val LOG_NS = 5_000_000_000L
+        /** v0.1.4: wake at 120 Hz (3 physics steps per wake) instead of 360 Hz. */
+        const val WAKE_NS = STEP_NS * 3
     }
 }

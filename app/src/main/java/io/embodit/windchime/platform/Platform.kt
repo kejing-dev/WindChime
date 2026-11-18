@@ -4,10 +4,12 @@ import android.app.Application
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioTrack
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
+import android.os.Process
 import android.os.SystemClock
 import android.util.Log
 import com.pico.spatial.ui.foundation.dsl.launch
@@ -55,7 +57,8 @@ class Graph(context: Context) {
     )
     val window = WindowCtl()
     /** v0.1.3 (D55): the physics' own 360 Hz thread; started while the volume is in the foreground. */
-    val simLoop = io.embodit.windchime.domain.SimLoop(flow, log = { Log.i(TAG, it) })
+    val simLoop = io.embodit.windchime.domain.SimLoop(flow, log = { Log.i(TAG, it) },
+        threadSetup = { Process.setThreadPriority(Process.THREAD_PRIORITY_DEFAULT) })
 
     init {
         scope.launch {
@@ -77,6 +80,15 @@ class Graph(context: Context) {
  * (tools/make_sounds.py) decoded once to PCM, mixed by the app's own bus ([Mixer]: every new note at its own level,
  * older tails ducked just enough, look-ahead limiter at -1 dBFS) and played through one low-latency AudioTrack.
  * The unit test MixerRenderTest renders the same Mixer with the same samples (qa/melody-peaks-<version>.txt).
+ *
+ * v0.1.4 (headset v0.1.3: AudioTrack underruns ~70/s = crackle / harsh noise, profile D55 补, gate audio-thread):
+ * the write thread runs at [Process.THREAD_PRIORITY_URGENT_AUDIO]; nothing it does takes a lock a producer holds or
+ * allocates; the AudioTrack buffer is sized in multiples of the device burst (AudioManager
+ * PROPERTY_OUTPUT_FRAMES_PER_BUFFER) and never forced down to 960 frames; the headset routes this track to the system
+ * spatializer output (48 kHz, 512-frame period, FAST is not available there); v0.1.4 opts out of it
+ * (SPATIALIZATION_BEHAVIOR_NEVER, the pan was always ours) and the buffer still covers several periods of either path.
+ * Every 5 s while the track is open: `MIX underruns=<n> (+<new>) buffer=<frames> render=<avg>/<max> us
+ * of <block> us`.
  */
 class SoundPlayer(private val context: Context) {
     @Volatile var volume = 1f
@@ -88,10 +100,12 @@ class SoundPlayer(private val context: Context) {
     private val tubes = java.util.concurrent.ConcurrentHashMap<String, List<Mixer.Sample>>()
     private val fxs = java.util.concurrent.ConcurrentHashMap<ChimeFlow.Fx, Mixer.Sample>()
     private val variantNext = HashMap<String, Int>()
-    private val lock = Object()
     @Volatile private var running = true
     private var track: AudioTrack? = null
-    private val thread = Thread(::loop, "WindChimeMix").apply { priority = Thread.MAX_PRIORITY; isDaemon = true }
+    private val thread = Thread(::loop, "WindChimeMix").apply { isDaemon = true }
+    private val am = context.getSystemService(AudioManager::class.java)
+    /** The device's output burst in frames (headset: 192 at 48 kHz); the mixer renders blocks of this size. */
+    private val burst: Int = (am?.getProperty(AudioManager.PROPERTY_OUTPUT_FRAMES_PER_BUFFER)?.toIntOrNull() ?: 240).coerceIn(64, 1024)
 
     init {
         Thread({
@@ -144,18 +158,26 @@ class SoundPlayer(private val context: Context) {
         Mixer.Sample(mono)
     }.onFailure { Log.w(TAG, "SOUND decode $path: $it") }.getOrNull()
 
-    /** Mixer thread: renders 240-frame blocks into the AudioTrack; pauses the track after 2 s of silence. */
+    /**
+     * Mixer thread (THREAD_PRIORITY_URGENT_AUDIO): renders [burst]-frame blocks into the AudioTrack; pauses the track
+     * after 2 s of silence and parks until a note arrives. No locks, no allocation inside the loop.
+     */
     private fun loop() {
-        val frames = 240
+        runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO) }
+            .onFailure { Log.w(TAG, "SOUND URGENT_AUDIO refused: $it") }
+        Log.i(TAG, "SOUND mix thread priority=${Process.getThreadPriority(Process.myTid())} burst=$burst")
+        val frames = burst
         val buf = FloatArray(frames * 2)
+        val blockUs = frames * 1_000_000L / SR
         var idleSince = SystemClock.uptimeMillis()
-        var lastLog = 0L
+        var lastLog = SystemClock.uptimeMillis()
         var lastUnderruns = 0
+        var loggedUnderruns = 0
         while (running) {
             if (mixer.active == 0) {
                 if (SystemClock.uptimeMillis() - idleSince > 2000) {
                     track?.let { runCatching { it.pause(); it.flush() } }
-                    synchronized(lock) { while (running && mixer.active == 0) lock.wait(500) }
+                    while (running && mixer.active == 0) java.util.concurrent.locks.LockSupport.parkNanos(500_000_000L)
                     idleSince = SystemClock.uptimeMillis()
                     continue
                 }
@@ -164,7 +186,7 @@ class SoundPlayer(private val context: Context) {
             if (t.playState != AudioTrack.PLAYSTATE_PLAYING) runCatching { t.play() }
             mixer.render(buf, frames)
             t.write(buf, 0, buf.size, AudioTrack.WRITE_BLOCKING)
-            // build.md (空中琴 v0.1.4): an underrun grows the buffer by one block, up to the track's capacity
+            // safety net (build.md 空中琴 v0.1.4): an underrun grows the buffer by one burst, up to the capacity
             val u = t.underrunCount
             if (u > lastUnderruns && t.bufferSizeInFrames < t.bufferCapacityInFrames) {
                 runCatching { t.setBufferSizeInFrames(minOf(t.bufferCapacityInFrames, t.bufferSizeInFrames + frames)) }
@@ -172,7 +194,12 @@ class SoundPlayer(private val context: Context) {
             }
             lastUnderruns = u
             val now = SystemClock.uptimeMillis()
-            if (now - lastLog > 5000 && mixer.active > 0) { lastLog = now; Log.i(TAG, "MIX voices=${mixer.active} limiterMin=${"%.2f".format(mixer.takeMinLimiterGain())} underruns=${t.underrunCount}") }
+            if (now - lastLog >= 5000) {
+                lastLog = now
+                val (avg, mx) = mixer.takeRenderStats()
+                Log.i(TAG, "MIX underruns=$u (+${u - loggedUnderruns}) voices=${mixer.active} buffer=${t.bufferSizeInFrames} render=$avg/$mx us of $blockUs us limiterMin=${"%.2f".format(mixer.takeMinLimiterGain())}")
+                loggedUnderruns = u
+            }
         }
         track?.let { runCatching { it.stop(); it.release() } }
         track = null
@@ -181,18 +208,26 @@ class SoundPlayer(private val context: Context) {
     private fun openTrack(): AudioTrack? = runCatching {
         val fmt = AudioFormat.Builder().setSampleRate(SR).setEncoding(AudioFormat.ENCODING_PCM_FLOAT).setChannelMask(AudioFormat.CHANNEL_OUT_STEREO).build()
         val min = AudioTrack.getMinBufferSize(SR, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_FLOAT)
+        // capacity: 16 bursts (or 4x the minimum) so the safety net has room; start at BUFFER_BURSTS bursts
+        val bytesPerFrame = 2 * 4
+        val cap = max(min * 4, burst * 16 * bytesPerFrame)
         AudioTrack.Builder()
-            .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_GAME).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
-            .setAudioFormat(fmt).setBufferSizeInBytes(max(min, 240 * 2 * 4 * 4))
-            .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY).setTransferMode(AudioTrack.MODE_STREAM).build()
+            .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_GAME).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                // v0.1.4: keep this track off the system spatializer thread (48 kHz, 512-frame period, ~58 ms write
+                // latency, where v0.1.3 underran ~70/s); the stereo pan is ours (design sound.spatial fallback +-0.3),
+                // the same route beat-pad plays through on this headset
+                .setSpatializationBehavior(AudioAttributes.SPATIALIZATION_BEHAVIOR_NEVER).build())
+            .setAudioFormat(fmt).setBufferSizeInBytes(cap)
+            .setTransferMode(AudioTrack.MODE_STREAM).build()
             .also {
-                // keep the tap-to-sound latency low: ask for ~4 blocks (22 ms) instead of the default (~70 ms)
-                runCatching { it.setBufferSizeInFrames(BUFFER_FRAMES) }
-                track = it; Log.i(TAG, "SOUND AudioTrack open buffer=${it.bufferSizeInFrames} frames (capacity ${it.bufferCapacityInFrames})")
+                val want = max(min / bytesPerFrame, burst * BUFFER_BURSTS)
+                runCatching { it.setBufferSizeInFrames(minOf(it.bufferCapacityInFrames, ((want + burst - 1) / burst) * burst)) }
+                track = it
+                Log.i(TAG, "SOUND AudioTrack open buffer=${it.bufferSizeInFrames} frames (capacity ${it.bufferCapacityInFrames}, burst $burst, min ${min / bytesPerFrame}, out ${am?.getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)} Hz) spatializer=never")
             }
     }.onFailure { Log.w(TAG, "SOUND AudioTrack: $it") }.getOrNull()
 
-    private fun wake() = synchronized(lock) { lock.notifyAll() }
+    private fun wake() = java.util.concurrent.locks.LockSupport.unpark(thread)
 
     /**
      * A strike: volume from the hit speed, fixed pan from the tube's x (design sound.spatial fallback: +-0.3).
@@ -209,7 +244,7 @@ class SoundPlayer(private val context: Context) {
         val delay = if (lagS < 0) 0f else (SCHED_S - lagS).toFloat().coerceAtLeast(0f)
         mixer.play(ids[v % ids.size], vol, Mixer.tubePan(s.tube), key, duckable = true, delayS = delay)
         wake()
-        Log.i(TAG, "SOUND ${kind.id} ${s.tube + 1} vol=${"%.2f".format(vol)} src=${s.source} t=${"%.4f".format(s.t)} delay=${"%.1f".format(delay * 1000)}ms duck=${"%.2f".format(mixer.lastDuck)}")
+        if (Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "SOUND ${kind.id} ${s.tube + 1} vol=$vol src=${s.source} t=${s.t} delay=${delay * 1000}ms")
     }
 
     fun fx(f: ChimeFlow.Fx) {
@@ -233,7 +268,8 @@ class SoundPlayer(private val context: Context) {
 
     companion object {
         const val SR = 44100
-        const val BUFFER_FRAMES = 960
+        /** Start the track buffer at this many device bursts (headset: 8 x 192 = 1536 frames, ~35 ms, three spatializer periods). */
+        const val BUFFER_BURSTS = 8
         /** Physics strikes play this long after their simulated time (covers the sim thread's batch, ~3 ms normally). */
         const val SCHED_S = 0.03
         /** The gust whoosh sits about 18 dB under a full strike; the paper rustle lower still (assets: sound). */

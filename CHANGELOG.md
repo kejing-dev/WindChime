@@ -1,5 +1,14 @@
 # Changelog / 更新记录
 
+## v0.1.4 · 2026-11-17
+
+- 声音不再噼啪刺耳：头显上 v0.1.3 的混音线程每秒断音约 70 次（AudioTrack underruns），断口就是噪声。混音写线程改为系统音频优先级（URGENT_AUDIO），混音循环不再加锁、不再分配内存，限幅器每帧的开销从 96 次比较降到常数；缓冲按设备 burst 的整数倍开（不再压到 960 帧）；不再走系统空间化线程（声像本来就是应用自己做的左右声道），每 5 秒记一次 underruns 和混音耗时
+- 物理线程降回普通优先级、每秒唤醒 120 次（每次 3 个 1/360 s 步），不再和音频、渲染抢 CPU；体积每帧只在发光值变化时才写材质
+- 声音本身和 v0.1.2 逐采样一致（同一段 10 s 大风离线渲染对比，qa/ab-gale10-*）
+- No more crackle: on the headset v0.1.3's mix thread underran ~70 times a second. The write thread now runs at URGENT_AUDIO, the mix loop takes no locks and allocates nothing, the limiter's look-ahead minimum is O(1); the buffer is sized in device bursts; the track opts out of the system spatializer thread (the stereo pan was always ours); underruns and mix cost are logged every 5 s
+- Physics thread back to normal priority, waking at 120 Hz (3 steps of 1/360 s); materials are written only when a glow changes
+- The sound itself is sample-identical to v0.1.2 (same 10 s gale rendered by both versions)
+
 ## v0.1.3 · 2026-11-16
 
 - 大风连续碰撞不再「卡」：物理挪到独立的 360 Hz 线程按真实时钟走，系统把体积降到 10 fps 时铃管也不慢动作；碰撞声按发生时刻排进混音，不再一帧一起响（真机门 C 反馈）

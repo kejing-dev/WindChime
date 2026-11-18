@@ -97,7 +97,9 @@ internal class ChimeScene(private val context: Context, private val graph: Graph
     private val windMat = ArrayList<UnlitMaterial>()
 
     private var shownKind: ChimeKind? = null
-    private var shownLabels: String? = null
+    private var labelsKind: ChimeKind? = null
+    private var labelsZh = false
+    private var labelsTestF = false
     private var lastPanelOpen = true
     private var panelGlowFrom = -10.0
     private var frames = 0
@@ -156,6 +158,7 @@ internal class ChimeScene(private val context: Context, private val graph: Graph
     fun setLightFloor(on: Boolean) {
         synchronized(floors) { for ((m, c, k) in floors) runCatching { m.setEmissiveColor(rgb(c, if (on) k else 0f)) } }
         lightFloor = on
+        emissiveLast.fill(-1) // the per-frame glow writes take over again on the next frame, as before
         Log.i(TAG, "LIGHT floor=$on materials=${floors.size}")
     }
 
@@ -449,28 +452,39 @@ internal class ChimeScene(private val context: Context, private val graph: Graph
         sailNode?.let { n -> n.at(p.sailPivot); n.transform().setQuaternion(hangQuat(p.sailDir)) }
         // S01: the sail glows softly for 2 s ("you can pull this")
         val hint = (p.sailHintUntil - now).toFloat()
-        sailMats[kind]?.setEmissiveColor(if (hint > 0f) glow(0.35f, 0.28f, 0.12f, 0.5f + 0.5f * sin(now.toFloat() * 6f)) else BLACK)
+        // v0.1.4: emissive colours are written only when they change (they were set on 7 materials every frame)
+        sailMats[kind]?.let { m -> emissive(m, SLOT_SAIL + kind.ordinal, 0.35f, 0.28f, 0.12f, if (hint > 0f) 0.5f + 0.5f * sin(now.toFloat() * 6f) else 0f) }
         // tiles light with their tube (0.8 s)
         for (i in 0 until 5) {
             val a = (now - p.tokenLit[i]).toFloat()
-            tokenMats[i].setEmissiveColor(if (a in 0f..0.8f) glow(0.55f, 0.45f, 0.30f, 1f - a / 0.8f) else BLACK)
+            emissive(tokenMats[i], i, 0.55f, 0.45f, 0.30f, if (a in 0f..0.8f) 1f - a / 0.8f else 0f)
         }
         // panel tile: glows 2 s when the window closes (S07) or when tapped
         val open = graph.window.panelOpen
         if (lastPanelOpen && !open) panelGlowFrom = now
         lastPanelOpen = open
         val pa = (now - max(panelGlowFrom, p.panelTileGlow)).toFloat()
-        panelMat?.setEmissiveColor(if (pa in 0f..2f) glow(0.5f, 0.42f, 0.25f, 0.5f + 0.5f * cos(pa * 7f)) else BLACK)
+        panelMat?.let { m -> emissive(m, SLOT_PANEL, 0.5f, 0.42f, 0.25f, if (pa in 0f..2f) 0.5f + 0.5f * cos(pa * 7f) else 0f) }
         // the paper puffs (gust, tap on the screen)
         val puff = (now - p.screenPuff).toFloat()
         paperEnt?.at(0f, 0f, 0.0025f + if (puff in 0f..0.4f && !rm) 0.006f * sin(PI.toFloat() * puff / 0.4f) else 0f)
         windLinesFrame(rm)
     }
 
+    /** Last emissive level written per material slot (-1 = unknown); quantised to 1/64 so a fade still moves smoothly. */
+    private val emissiveLast = IntArray(SLOT_COUNT) { -1 }
+
+    private fun emissive(m: PhysicallyBasedMaterial, slot: Int, r: Float, g: Float, b: Float, k: Float) {
+        val q = (k.coerceIn(0f, 1f) * 64f + 0.5f).toInt()
+        if (emissiveLast[slot] == q) return
+        emissiveLast[slot] = q
+        m.setEmissiveColor(if (q == 0) BLACK else glow(r, g, b, q / 64f))
+    }
+
     /** +GUST: six thin lines blow through the volume from the upwind side in 0.8 s (none with reduced motion). */
     private fun windLinesFrame(rm: Boolean) {
         val gp = pose.gust
-        if (gp == null || rm) { windLines.forEach { if (it.enabled) it.enabled = false }; return }
+        if (gp == null || rm) { for (i in 0 until windLines.size) { val e = windLines[i]; if (e.enabled) e.enabled = false }; return }
         val (g, p) = gp
         val dirx = g.dx; val dirz = g.dz
         val yaw = kotlin.math.atan2(-dirz, dirx)
@@ -508,9 +522,9 @@ internal class ChimeScene(private val context: Context, private val graph: Graph
     private fun refreshLabels() {
         val s = graph.settings.value
         val zh = isZh(s.language)
-        val key = "${shownKind?.id}|$zh|$testF"
-        if (key == shownLabels) return
-        shownLabels = key
+        // v0.1.4: compared field by field (the string key was built every frame)
+        if (shownKind === labelsKind && zh == labelsZh && testF == labelsTestF) return
+        labelsKind = shownKind; labelsZh = zh; labelsTestF = testF
         val kind = shownKind ?: return
         val f = testF
         scope.launch(Dispatchers.IO) {
@@ -534,6 +548,10 @@ internal class ChimeScene(private val context: Context, private val graph: Graph
     fun dispose() { synchronized(all) { all.forEach { runCatching { it.close() } }; all.clear() } }
 
     companion object {
+        /** [emissive] slots: 0..4 tiles, 5..7 sail per chime kind, 8 panel tile. */
+        const val SLOT_SAIL = 5
+        const val SLOT_PANEL = 8
+        const val SLOT_COUNT = 9
         /** Lux-scale key light (zen-orb 1500 was right for a desk volume; checked on the emulator, ui-audit). */
         const val LIGHT_LUX = 1500f
         /** System environment light (IBL) scale on the root. */

@@ -1,6 +1,6 @@
 # 风铃 Windchime: project guidance
 
-A desk wind chime for PICO OS 6 Shared Space (Spatial SDK BOM 6.1.9), package `io.embodit.windchime`, v0.1.2.
+A desk wind chime for PICO OS 6 Shared Space (Spatial SDK BOM 6.1.9), package `io.embodit.windchime`, v0.1.4.
 Design contract: spatial-app-factory `apps/wind-chime/design-package.json` v1.3 (gate B passed 2026-11-15, defaults:
 Shared Space, still wind by default, brass A / bamboo A / glass A, icon A). Skeleton: the factory's shared volume
 template (volume + `Placement.right` control window, native TabBar, theme, board-input template).
@@ -23,7 +23,8 @@ template (volume + `Placement.right` control window, native TabBar, theme, board
 | `domain/Palette.kt` | UI colours + WCAG contrast (unit-tested) |
 | `ui/scene/*` | `ChimeScene` (entities, per-frame pose copy from the ECS `ChimeFrameSystem`), `ChimeScreen` (SpatialView + board-input), `Meshes` (true round meshes), `Labels` (tile / sail text) |
 | `ui/control/*` | window pages; every Text logs `OVERFLOW <tag>` when cut; every page logs `LAYOUT <page> blank=<%>` |
-| `domain/Mixer.kt` | the mix bus (v0.1.1): new notes at their own level, older tails ducked just enough (attack peak +-0.42 dB), look-ahead limiter at -1 dBFS; `platform/Platform.kt` SoundPlayer decodes the OGGs once and feeds one AudioTrack |
+| `domain/Mixer.kt` | the mix bus (v0.1.1): new notes at their own level, older tails ducked just enough (attack peak +-0.42 dB), look-ahead limiter at -1 dBFS. v0.1.4: real-time safe (lock-free inbox, no allocation in `render`, O(1) limiter window) with the same output sample for sample; `platform/Platform.kt` SoundPlayer decodes the OGGs once and feeds one AudioTrack from a THREAD_PRIORITY_URGENT_AUDIO thread, buffer = 8 device bursts, SPATIALIZATION_BEHAVIOR_NEVER, `MIX underruns=<n> (+<new>) … render=<avg>/<max> us of <block> us` every 5 s |
+| `domain/SimLoop.kt` | physics thread (v0.1.3, D55): fixed 1/360 s steps by the wall clock; v0.1.4 wakes at 120 Hz at normal priority |
 | `domain/VolumeScale.kt` | measured volume size -> root scale and hand travel / hit point -> content metres (0.5x / 1x / 3x in VolumeScaleTest) |
 | `tools/` | `make_textures.py`, `make_sounds.py` (CC0 recordings -> 30 notes), `loudness.py`, `build_icon.py` |
 
@@ -36,7 +37,8 @@ A press < 2 cm and < 0.35 s = tap; >= 2 cm = drag (sail = grab S03; screen / str
 export JAVA_HOME=~/.pico/primer-cli/jdk/jdk-21.0.13+9/Contents/Home
 ./gradlew assembleDebug :app:testDebugUnitTest
 ~/.factory-venv/bin/python tools/make_textures.py; ~/.factory-venv/bin/python tools/make_sounds.py --samples <dir>
-~/.factory-venv/bin/python tools/loudness.py <factory>/apps/wind-chime/qa v0.1.2   # after the unit tests (MixerRenderTest / MixerStressTest render the bus with the real samples, needs ffmpeg; stress report app/build/loudness/stress-v0.1.2.txt)
+~/.factory-venv/bin/python tools/loudness.py <factory>/apps/wind-chime/qa v0.1.4   # after the unit tests (MixerRenderTest / MixerStressTest render the bus with the real samples, needs ffmpeg; stress report app/build/loudness/stress-v0.1.4.txt)
+~/.factory-venv/bin/python tools/ab_compare.py <factory>/apps/wind-chime/qa <old.wav> <new.wav>   # A/B of the same 10 s gale (GaleABTest writes app/build/ab/gale10-*.wav; render the old tag from a git worktree with the same test reading app/build/ab/gale10-events.csv)
 ~/.factory-venv/bin/python tools/build_icon.py --icon512 <factory>/apps/wind-chime/icon.png
 ```
 Emulators are shared: `python3 -I bin/emu_borrow.py borrow wind-chime` in the factory, `return` after.
@@ -64,6 +66,11 @@ Other: `strike n`, `token n`, `tap <holder>`, `tapscreen "<x> <y>"`, `grab` / `d
 `gustbutton`, `vol 0..1`, `gustsound on|off`, `page play|howto|settings`, `exitask`, `closepanel`, `reopen`, `testf on|off`,
 `vscale <k>|off` (pretend a k x resize), `lightfloor on|off` (emissive floor), `envlight <0..1>` (environment light scale)
 (F-up test on the tiles, panel tile and paper sail), `state` / `dump`.
+
+## Sound health (profile D55 补)
+Gale 60 s on a device: `goto S02`, `wind 3`, then `adb logcat -s WindChime | grep MIX`: `underruns=` must not grow
+(`+0` on every 5 s line). `render=avg/max us of <block> us` is the mix cost per burst (should stay a few % of the block).
+v0.1.3 played through the headset's system spatializer output (48 kHz, 512-frame period, ~58 ms, no FAST path) and underran ~70/s; v0.1.4 sets SPATIALIZATION_BEHAVIOR_NEVER (pan is ours), like beat-pad.
 
 ## Known
 - 3D pinches / drags can't be sent by `pico-cli interact` on the Mac emulator: driven by the debug broadcast through the same
